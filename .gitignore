@@ -1,0 +1,59 @@
+# 🐍 Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.Python
+
+# 📦 Virtual Environments
+venv/
+env/
+.venv/
+
+# 🐳 Docker
+*.log
+*.db
+*.sqlite3
+*.pid
+*.tar
+*.swp
+*.bak
+.dockerignore
+
+# ⚙️ Config / Env
+.env
+.env.*
+*.secret
+secrets/
+credentials.json
+
+# 📂 IDEs & Editors
+.vscode/
+.idea/
+*.code-workspace
+
+# 📁 OS Junk
+.DS_Store
+Thumbs.db
+
+# 🚀 Kubernetes & Deployment
+k8s/secrets/
+*.yaml~  # editor temp files
+
+# 📦 Packaging
+dist/
+build/
+*.whl
+
+# 🔍 Unit Test Caches
+pytest_cache/
+.cache/
+.tox/
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+

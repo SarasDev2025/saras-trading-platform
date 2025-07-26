@@ -104,6 +104,14 @@ Kubernetes deployment manifests:
 - Horizontal Pod Autoscalers
 - ConfigMaps for environment vars
 
+### 12. Business Logic
+How to execute the trade, splice it.
+As there limitations on number of trades we can put in one go
+
+### 13. Documentation
+Videos and training material.
+
+
 ---
 
 ## 🚀 How It Works (Data Flow)

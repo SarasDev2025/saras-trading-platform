@@ -114,6 +114,160 @@ Videos and training material.
 
 ---
 
+###  14. 🛠️ Full SvelteKit Frontend Development Setup Guide (Mac & Windows)
+
+---
+
+### ✅ 1. **Install Node.js (Correct Version)**
+
+ Use **Node.js 20.19.x** or **22.12+**
+
+#### Mac (recommended: via Homebrew + NVM)
+
+```bash
+# Install Homebrew if not done
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install NVM
+brew install nvm
+
+# Setup NVM directories
+mkdir ~/.nvm
+echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.zshrc
+echo '[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"' >> ~/.zshrc
+source ~/.zshrc
+
+# Install compatible Node version
+nvm install 22
+nvm use 22
+```
+
+#### Windows (via Node.js installer or NVM-Windows)
+
+* Download [Node.js 22.x](https://nodejs.org/en/download)
+* OR install [nvm-windows](https://github.com/coreybutler/nvm-windows) and run:
+
+  ```bash
+  nvm install 22
+  nvm use 22
+  ```
+
+---
+
+### ✅ 2. **Install SvelteKit App (Using `sv` instead of deprecated `create-svelte`)**
+
+```bash
+# Install the recommended `sv` package
+npm install -g sv
+
+# Create project folder
+cd /your/dev/folder
+sv create web-ui
+cd web-ui
+```
+
+---
+
+### ✅ 3. **Project Setup Options (Choose in CLI Prompt)**
+
+* **Template**: SvelteKit + TypeScript + SSR
+* **Adapter**: `adapter-auto`
+* **Paraglide**: Yes (for multilingual support)
+* **Prettier, ESLint**: Optional
+* **Database support**: PostgreSQL
+* **Package manager**: Choose `npm` or `pnpm` (we’ll use `npm` here)
+
+---
+
+### ✅ 4. **Install Dependencies**
+
+```bash
+npm install
+```
+
+---
+
+### ✅ 5. **Fix Node Engine Compatibility (optional)**
+
+If you see engine mismatch:
+
+* Open `package.json` and change the `engines` field:
+
+```json
+"engines": {
+  "node": ">=20.19"
+}
+```
+
+---
+
+### ✅ 6. **Run the App**
+
+```bash
+npm run dev -- --open
+```
+
+* This will open: [http://localhost:5173](http://localhost:5173)
+
+---
+
+### ✅ 7. **Set up `.env` (for PostgreSQL)**
+
+Create a `.env` file in root:
+
+```env
+DATABASE_URL=postgres://your_user:your_password@localhost:5432/your_db
+```
+
+Avoid declaring `client = postgres()` multiple times.
+
+---
+
+### ✅ 8. **Connect to Backend (API Gateway)**
+
+In your SvelteKit code, use `fetch` with your API Gateway base URL:
+
+```ts
+const res = await fetch('http://localhost:8000/trades', {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(data),
+});
+```
+
+---
+
+### ✅ 9. **.gitignore**
+
+Make sure to include:
+
+```
+node_modules/
+.env
+.vscode/
+dist/
+build/
+.paraglide/
+```
+
+---
+
+### ✅ 10. **Optional: Dockerize Later**
+
+You can develop locally without Docker first, then containerize with:
+
+```bash
+npm run build
+```
+
+And use `Dockerfile` + `docker-compose.yml` to serve.
+
+
+---
+
 ## 🚀 How It Works (Data Flow)
 
 1. User logs in → receives JWT token.

@@ -57,3 +57,15 @@ coverage.xml
 *.cover
 *.py,cover
 
+# Frontend (web-ui) ignores
+/web-ui/node_modules/
+/web-ui/.svelte-kit/
+/web-ui/.paraglide/
+/web-ui/build/
+/web-ui/dist/
+/web-ui/.env*
+/web-ui/.DS_Store
+/web-ui/npm-debug.log*
+/web-ui/yarn-debug.log*
+/web-ui/yarn-error.log*
+/web-ui/*.lock

@@ -118,7 +118,7 @@ Videos and training material.
 
 ---
 
-### ✅ 1. **Install Node.js (Correct Version)**
+### ✅ 14.1. **Install Node.js (Correct Version)**
 
  Use **Node.js 20.19.x** or **22.12+**
 
@@ -154,7 +154,7 @@ nvm use 22
 
 ---
 
-### ✅ 2. **Install SvelteKit App (Using `sv` instead of deprecated `create-svelte`)**
+### ✅ 14.2. **Install SvelteKit App (Using `sv` instead of deprecated `create-svelte`)**
 
 ```bash
 # Install the recommended `sv` package
@@ -168,7 +168,7 @@ cd web-ui
 
 ---
 
-### ✅ 3. **Project Setup Options (Choose in CLI Prompt)**
+### ✅ 14.3. **Project Setup Options (Choose in CLI Prompt)**
 
 * **Template**: SvelteKit + TypeScript + SSR
 * **Adapter**: `adapter-auto`
@@ -179,7 +179,7 @@ cd web-ui
 
 ---
 
-### ✅ 4. **Install Dependencies**
+### ✅ 14.4. **Install Dependencies**
 
 ```bash
 npm install
@@ -187,7 +187,7 @@ npm install
 
 ---
 
-### ✅ 5. **Fix Node Engine Compatibility (optional)**
+### ✅ 14.5. **Fix Node Engine Compatibility (optional)**
 
 If you see engine mismatch:
 
@@ -201,7 +201,7 @@ If you see engine mismatch:
 
 ---
 
-### ✅ 6. **Run the App**
+### ✅ 14.6. **Run the App**
 
 ```bash
 npm run dev -- --open
@@ -211,7 +211,7 @@ npm run dev -- --open
 
 ---
 
-### ✅ 7. **Set up `.env` (for PostgreSQL)**
+### ✅ 14.7. **Set up `.env` (for PostgreSQL)**
 
 Create a `.env` file in root:
 
@@ -223,7 +223,7 @@ Avoid declaring `client = postgres()` multiple times.
 
 ---
 
-### ✅ 8. **Connect to Backend (API Gateway)**
+### ✅ 14.8. **Connect to Backend (API Gateway)**
 
 In your SvelteKit code, use `fetch` with your API Gateway base URL:
 
@@ -240,7 +240,7 @@ const res = await fetch('http://localhost:8000/trades', {
 
 ---
 
-### ✅ 9. **.gitignore**
+### ✅ 14.9. **.gitignore**
 
 Make sure to include:
 
@@ -255,7 +255,7 @@ build/
 
 ---
 
-### ✅ 10. **Optional: Dockerize Later**
+### ✅ 14.10. **Optional: Dockerize Later**
 
 You can develop locally without Docker first, then containerize with:
 
@@ -266,6 +266,43 @@ npm run build
 And use `Dockerfile` + `docker-compose.yml` to serve.
 
 
+### ✅ 14.11 What to do instead (Tailwind v4 + SvelteKit)
+Ensure the right packages are installed
+npm i -D tailwindcss @tailwindcss/vite @tailwindcss/forms @tailwindcss/typography
+Enable the Tailwind Vite plugin
+Edit vite.config.ts (or vite.config.js):
+
+import { defineConfig } from 'vite';
+import { sveltekit } from '@sveltejs/kit/vite';
+import tailwind from '@tailwindcss/vite';
+
+export default defineConfig({
+  plugins: [sveltekit(), tailwind()],
+});
+Import Tailwind in your global CSS
+In src/app.css (create if missing):
+
+@import "tailwindcss";
+
+/* Optional plugins (forms, typography) */
+@plugin "@tailwindcss/forms";
+@plugin "@tailwindcss/typography";
+Load the global CSS in your layout
+In src/routes/+layout.svelte:
+
+<script lang="ts">
+  import '../app.css';
+</script>
+
+<slot />
+Restart the dev server
+npm run dev
+Quick check
+Add a test element somewhere (e.g., in +page.svelte):
+<div class="p-4 bg-blue-600 text-white rounded">Tailwind v4 is working 🎉</div>
+Notes
+You can skip creating tailwind.config.* for now; Tailwind v4 works great with zero config.
+If later you need deep customization (theme, content, etc.), you can add a config file manually (tailwind.config.ts/js) and Tailwind will pick it up.
 ---
 
 ## 🚀 How It Works (Data Flow)

@@ -13,6 +13,15 @@ A scalable, Docker + Kubernetes based trading system using a single Zerodha admi
 **Input:** HTTP API requests from clients  
 **Output:** Routes to microservices; returns service responses  
 
+
+### 1.1 Build the Docker Image
+Navigate into the api-gateway/ folder and run:
+docker build -t api-gateway:latest .
+
+
+### 1.2. Run the Container
+docker run -d -p 8000:8000 api-gateway:latest
+
 ---
 
 ### 2. `user-service/`
@@ -94,6 +103,14 @@ Kubernetes deployment manifests:
 - LoadBalancer/Ingress YAMLs
 - Horizontal Pod Autoscalers
 - ConfigMaps for environment vars
+
+### 12. Business Logic
+How to execute the trade, splice it.
+As there limitations on number of trades we can put in one go
+
+### 13. Documentation
+Videos and training material.
+
 
 ---
 

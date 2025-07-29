@@ -4,6 +4,7 @@ Saras multiuser trading platform
 A scalable, Docker + Kubernetes based trading system using a single Zerodha admin account via Lean, with portfolio and smallcase management for multiple users.
 
 ---
+```text
 ┌─────────────┐
 │   Browser   │
 │─────────────│
@@ -43,7 +44,7 @@ A scalable, Docker + Kubernetes based trading system using a single Zerodha admi
 │────────────────────────────│
 │ Tables: Users, Holdings, etc. │
 └────────────────────────────┘
-
+```
 
 ## 🧩 Components Overview
 

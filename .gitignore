@@ -69,3 +69,5 @@ coverage.xml
 /web-ui/yarn-debug.log*
 /web-ui/yarn-error.log*
 /web-ui/*.lock
+
+node_modules/

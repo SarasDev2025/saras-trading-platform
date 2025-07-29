@@ -22,6 +22,7 @@ docker build -t api-gateway:latest .
 ### 1.2. Run the Container
 docker run -d -p 8000:8000 api-gateway:latest
 
+On browser open - 127.0.0.1:8000/portfolio/status
 ---
 
 ### 2. `user-service/`

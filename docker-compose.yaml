@@ -1,3 +1,27 @@
-# Docker Compose setup
-version: '3.8'
+version: "3.9"
+
 services:
+  api-gateway:
+    build:
+      context: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    networks:
+      - trading-net
+
+  web-ui:
+    build:
+      context: ./web-ui
+    container_name: web-ui
+    ports:
+      - "3000:3000"
+    networks:
+      - trading-net
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+      - DATABASE_URL=postgres://your-user:your-password@your-db-host:5432/your-db-name
+
+networks:
+  trading-net:
+    driver: bridge

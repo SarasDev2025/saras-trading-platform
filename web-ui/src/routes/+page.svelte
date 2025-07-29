@@ -1,3 +1,93 @@
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
-<div class="p-4 bg-blue-600 text-white rounded">Tailwind v4 is working 🎉</div>
+<script>
+    import { onMount } from 'svelte';
+  
+    let portfolio = [];
+    let error = '';
+    let loading = true;
+
+    onMount(async () => {
+        const apiBase = import.meta.env.VITE_API_BASE_URL;
+    
+        if (!apiBase) {
+            error = "VITE_API_BASE_URL is not defined";
+            loading = false;
+            return;
+        }
+
+        try {
+            const res = await fetch(apiBase + '/portfolio/status');
+            if (!res.ok) throw new Error('Failed to load portfolio');
+            portfolio = await res.json();
+        } catch (err) {
+            error = `Failed to fetch portfolio: ${err.message}`;
+        } finally {
+            loading = false;
+        }
+    });
+  </script>
+  
+  
+  <div class="h-screen grid grid-rows-[auto_1fr_auto] grid-cols-[200px_1fr_200px]">
+    <!-- Top (Header) -->
+    <header class="col-span-3 bg-gray-900 text-white p-4 text-2xl font-bold shadow">
+      Saras Trading
+    </header>
+  
+    <!-- Left Sidebar -->
+    <aside class="row-span-1 bg-gray-100 p-4 border-r">
+      <!-- Watchlist / Gainers / Losers -->
+      <p class="font-semibold mb-2">Sidebar Left</p>
+      <ul>
+        <li>Watchlist</li>
+        <li>Gainers</li>
+        <li>Losers</li>
+      </ul>
+    </aside>
+  
+    <!-- Main Content -->
+    <main class="bg-white p-4">
+        <h2 class="text-xl font-semibold mb-4">Portfolio</h2>
+      
+        {#if error}
+          <p class="text-red-500">{error}</p>
+        {:else if portfolio.length === 0}
+          <p>Loading portfolio...</p>
+        {:else}
+          <table class="table-auto w-full border">
+            <thead>
+              <tr class="bg-gray-100">
+                <th class="px-4 py-2 border">Symbol</th>
+                <th class="px-4 py-2 border">Quantity</th>
+                <th class="px-4 py-2 border">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each portfolio as item}
+                <tr>
+                  <td class="px-4 py-2 border">{item.symbol}</td>
+                  <td class="px-4 py-2 border">{item.quantity}</td>
+                  <td class="px-4 py-2 border">{item.value}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </main>
+      
+  
+    <!-- Right Sidebar -->
+    <aside class="row-span-1 bg-gray-50 p-4 border-l">
+      <!-- News / Other Widgets -->
+      <p class="font-semibold mb-2">Sidebar Right</p>
+      <ul>
+        <li>News Window</li>
+        <li>Other widgets</li>
+      </ul>
+    </aside>
+  
+    <!-- Bottom (Charts) -->
+    <footer class="col-span-3 bg-gray-200 p-4 text-center border-t">
+      Charts and other summary info here
+    </footer>
+  </div>
+  

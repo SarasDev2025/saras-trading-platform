@@ -4,6 +4,46 @@ Saras multiuser trading platform
 A scalable, Docker + Kubernetes based trading system using a single Zerodha admin account via Lean, with portfolio and smallcase management for multiple users.
 
 ---
+┌─────────────┐
+│   Browser   │
+│─────────────│
+│ Svelte UI   │
+│ TailwindCSS │
+└─────┬───────┘
+      │ HTTP (fetch / VITE_API_BASE_URL)
+      ▼
+┌──────────────┐
+│  Web UI      │  <-- Docker container
+│──────────────│
+│ SvelteKit    │
+│ Runs on 3000 │
+└─────┬────────┘
+      │ REST API call
+      ▼
+┌─────────────────┐
+│ API Gateway     │  <-- Docker container
+│─────────────────│
+│ FastAPI (Python)│
+│ Uvicorn (ASGI)  │
+│ CORS Middleware │
+│ Route: /portfolio/status │
+└─────┬────────────┘
+      │ Internal service call or DB access
+      ▼
+┌──────────────────┐
+│ Portfolio Service│  (Optional Microservice Layer)
+│──────────────────│
+│ Python / FastAPI │
+│ Portfolio logic  │
+└─────┬────────────┘
+      │ DB query
+      ▼
+┌────────────────────────────┐
+│ PostgreSQL Database        │  <-- Docker container (planned)
+│────────────────────────────│
+│ Tables: Users, Holdings, etc. │
+└────────────────────────────┘
+
 
 ## 🧩 Components Overview
 

@@ -3,7 +3,17 @@ Saras multiuser trading platform
 
 A scalable, Docker + Kubernetes based trading system using a single Zerodha admin account via Lean, with portfolio and smallcase management for multiple users.
 
----
+---------
+Latest commands to execute & run
+1. git clone this project
+2. in docker-compose.yaml - check all keys are defined
+3. create a .env with actual key values
+4. shut down the docker - docker compose down -v 
+5. Start the docker docker compose up --build
+6. The UI would be at http://localhost:3000
+7. The API gateway would be running at http://localhost:8000
+-----------
+
 ```text
 ┌─────────────┐
 │   Browser   │

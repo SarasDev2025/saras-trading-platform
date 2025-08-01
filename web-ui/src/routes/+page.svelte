@@ -1,4 +1,26 @@
 <script>
+    let alpacaAccount = null;
+    let showAlpaca = false;
+    let alpacaError = '';
+    let alpacaLoading = false;
+
+    async function loadAlpacaAccount() {
+        alpacaLoading = true;
+        alpacaError = '';
+        alpacaAccount = null;
+        try {
+            const apiBase = import.meta.env.VITE_API_BASE_URL;
+            const res = await fetch(`${apiBase}/alpaca/account`);
+            if (!res.ok) throw new Error("Failed to fetch Alpaca account");
+            alpacaAccount = await res.json();
+            showAlpaca = true;
+        } catch (err) {
+            alpacaError = err.message;
+        } finally {
+            alpacaLoading = false;
+        }
+    }
+
     import { onMount } from 'svelte';
   
     let portfolio = [];
@@ -47,7 +69,13 @@
     <!-- Main Content -->
     <main class="bg-white p-4">
         <h2 class="text-xl font-semibold mb-4">Portfolio</h2>
-      
+        <button class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 mb-4"
+            on:click={loadAlpacaAccount}>
+            Show Alpaca Account
+        </button>
+        {#if showAlpaca}
+          <button class="text-sm text-blue-600 mt-2" on:click={() => showAlpaca = false}>Hide</button>
+        {/if}
         {#if error}
           <p class="text-red-500">{error}</p>
         {:else if portfolio.length === 0}
@@ -72,6 +100,42 @@
             </tbody>
           </table>
         {/if}
+
+        {#if showAlpaca}
+            <h2 class="text-xl font-semibold mt-8 mb-4">Alpaca Account Info</h2>
+
+            {#if alpacaLoading}
+                <p>Loading Alpaca account...</p>
+            {:else if alpacaError}
+                <p class="text-red-500">{alpacaError}</p>
+            {:else if alpacaAccount}
+            <table class="table-auto w-full border">
+                <tbody>
+                  <tr>
+                    <td class="font-semibold">Account Number:</td>
+                    <td>{alpacaAccount.account_number}</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Status:</td>
+                    <td>{alpacaAccount.status}</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Buying Power:</td>
+                    <td>{alpacaAccount.buying_power}</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Cash:</td>
+                    <td>{alpacaAccount.cash}</td>
+                  </tr>
+                  <tr>
+                    <td class="font-semibold">Equity:</td>
+                    <td>{alpacaAccount.equity}</td>
+                  </tr>
+                </tbody>
+              </table>            
+            {/if}
+        {/if}
+
       </main>
       
   

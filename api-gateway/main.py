@@ -1,6 +1,14 @@
 from fastapi import FastAPI
-from routers import auth_router, portfolio_router
+from routers import auth_router, portfolio_router, alpaca_router
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL")
 
 app = FastAPI(title="Saras Trading API Gateway")
 
@@ -25,3 +33,4 @@ async def root():
 
 app.include_router(auth_router.router, prefix="/auth")
 app.include_router(portfolio_router.router, prefix="/portfolio")
+app.include_router(alpaca_router.router, prefix="/alpaca")

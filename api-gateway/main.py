@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import auth_router, portfolio_router, alpaca_router
+from routers import auth_router, portfolio_router, alpaca_router, info_router
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -34,3 +34,4 @@ async def root():
 app.include_router(auth_router.router, prefix="/auth")
 app.include_router(portfolio_router.router, prefix="/portfolio")
 app.include_router(alpaca_router.router, prefix="/alpaca")
+app.include_router(info_router.router, prefix="/platform")

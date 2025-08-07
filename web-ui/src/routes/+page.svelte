@@ -3,7 +3,19 @@
     let showAlpaca = false;
     let alpacaError = '';
     let alpacaLoading = false;
+    let platformInfo = null;
+    let infoError = '';
 
+    async function loadPlatformInfo() {
+        try {
+            const res = await fetch(import.meta.env.VITE_API_BASE_URL + '/platform/info');
+            if (!res.ok) throw new Error('Failed to load platform info');
+            platformInfo = await res.json();
+        } catch (err) {
+            infoError = err.message;
+        }
+    }
+    
     async function loadAlpacaAccount() {
         alpacaLoading = true;
         alpacaError = '';
@@ -73,6 +85,8 @@
             on:click={loadAlpacaAccount}>
             Show Alpaca Account
         </button>
+        <button on:click={loadPlatformInfo} class="bg-blue-600 text-white px-4 py-2 rounded">Get Platform Info</button>
+
         {#if showAlpaca}
           <button class="text-sm text-blue-600 mt-2" on:click={() => showAlpaca = false}>Hide</button>
         {/if}
@@ -136,6 +150,16 @@
             {/if}
         {/if}
 
+        {#if infoError}
+            <p class="text-red-600">{infoError}</p>
+        {:else if platformInfo}
+            <div class="mt-4">
+                <p><strong>Name:</strong> {platformInfo.name}</p>
+                <p><strong>Description:</strong> {platformInfo.description}</p>
+                <p><strong>Version:</strong> {platformInfo.version}</p>
+                <p><strong>Updated:</strong> {platformInfo.last_updated}</p>
+            </div>
+        {/if}
       </main>
       
   

@@ -13,10 +13,10 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL")
 app = FastAPI(title="Saras Trading API Gateway")
 
 origins = [
-    "http://localhost:3000",      # from browser dev
-    "http://127.0.0.1:3000",      # alt
+    "http://localhost:5173",      # from browser dev
+    "http://127.0.0.1:5173",      # alt
     "http://api-gateway:8000",    # from within Docker network
-    "http://web-ui:3000"          # if container sends fetch (SSR)
+    "http://web-ui:5173"          # if container sends fetch (SSR)
 ]
 
 app.add_middleware(

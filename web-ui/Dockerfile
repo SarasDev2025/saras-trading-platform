@@ -1,24 +1,22 @@
-# Use Node.js image
-FROM node:20-alpine
+# Step 1: Build the app
+FROM node:20-alpine AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Install dependencies
-COPY package*.json ./
-RUN npm install
-
-# Copy rest of the source
 COPY . .
 
-# Copy .env explicitly
-COPY .env .env
-
-# Build the SvelteKit app
+RUN npm install
 RUN npm run build
 
-# Expose the app port (default for adapter-node is 3000)
+# Step 2: Serve it with Vite preview
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+
+RUN npm install -g vite serve
+
 EXPOSE 3000
 
-# Run the SvelteKit app
-CMD ["node", "build"]
+CMD ["vite", "preview", "--port", "3000", "--host"]

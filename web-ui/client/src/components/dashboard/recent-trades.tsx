@@ -2,10 +2,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
-import type { Trade } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
-import { api } from "@/lib/api"; // <-- new
+import { api } from "@/lib/api";
+import { AxiosResponse } from "axios";
 
 const tabs = [
   { id: "trades", label: "Recent Trades" },
@@ -14,32 +14,115 @@ const tabs = [
   { id: "algorithms", label: "Algorithms" },
 ];
 
+// API Response type for trades
+interface ApiTrade {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell' | 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  total: number;
+  status: string;
+  createdAt: string;
+  filledAt: string | null;
+}
+
+// API Response structure
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  error?: string;
+  message?: string;
+}
+
+// UI Trade type
 type Trade = {
-  id: number;
+  id: string;
   createdAt: string;
   symbol: string;
   side: "BUY" | "SELL";
   quantity: number;
   price: number;
   value: number;
-  status: "FILLED" | "PENDING" | "CANCELLED";
+  status: string;
 };
 
 export function RecentTrades() {
   const [activeTab, setActiveTab] = useState("trades");
-  const portfolioId = "portfolio-id"; // later: pass as prop or read from route
+  // Using a valid portfolio ID from the database
+  const portfolioId = "48ed30e0-2e81-4525-b950-7f93cfaa631e"; // Valid portfolio ID from the database
 
-  const { data: trades = [], isLoading, isError, error } = useQuery<Trade[]>({
-    queryKey: ["/portfolio", portfolioId, "trades"],
+  const { data: trades = [], isLoading, isError, error } = useQuery<Trade[], Error>({
+    queryKey: ["portfolio", portfolioId, "trades"],
     enabled: activeTab === "trades",
-    queryFn: async () => {
-      const res = await api.get(`/trade/portfolios/${portfolioId}/trades`);
-      console.log("[RQ] queryFn done", res.status, res.request?.responseURL);
-  
-      if (!Array.isArray(res.data)) {
-        throw new Error("Trades API did not return an array");
+    queryFn: async (): Promise<Trade[]> => {
+      console.log(`[Trades] Fetching trades for portfolio ${portfolioId}`);
+      
+      try {
+        const res = await api.get<ApiResponse<ApiTrade[]>>(`/portfolios/${portfolioId}/trades`);
+        console.log("[Trades] API Response Status:", res.status);
+        console.log("[Trades] Response URL:", res.request?.responseURL);
+        
+        // API returns {success: true, data: [...]} format
+        const apiResponse = res.data;
+        console.log('[Trades] API Response Data:', JSON.stringify(apiResponse, null, 2));
+        
+        if (!apiResponse) {
+          const errorMsg = 'Empty response from server';
+          console.error('[Trades] Error:', errorMsg);
+          throw new Error(errorMsg);
+        }
+        
+        if (!apiResponse.success) {
+          const errorMsg = apiResponse.error || 'Trades API did not return valid data';
+          console.error('[Trades] API Error:', errorMsg);
+          throw new Error(errorMsg);
+        }
+        
+        if (!Array.isArray(apiResponse.data)) {
+          const errorMsg = `Trades API did not return an array of trades. Received: ${typeof apiResponse.data}`;
+          console.error('[Trades] Error:', errorMsg, 'Data:', apiResponse.data);
+          throw new Error(errorMsg);
+        }
+        
+        console.log(`[Trades] Received ${apiResponse.data.length} trades`);
+        if (apiResponse.data.length > 0) {
+          console.log('[Trades] First trade sample:', JSON.stringify(apiResponse.data[0], null, 2));
+        }
+        
+        // Transform the API response to match the UI Trade type
+        return apiResponse.data.map((trade: any) => {
+          try {
+            // The API response already has the correct field names
+            return {
+              id: trade?.id || '',
+              symbol: trade?.symbol || 'UNKNOWN',
+              side: (trade?.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY') as 'BUY' | 'SELL',
+              quantity: trade?.quantity ? Number(trade.quantity) : 0,
+              price: trade?.price ? Number(trade.price) : 0,
+              value: trade?.total ? Number(trade.total) : 0,
+              status: trade?.status || 'UNKNOWN',
+              createdAt: trade?.createdAt || new Date().toISOString()
+            };
+          } catch (error) {
+            console.error('Error processing trade:', trade, error);
+            // Return a fallback trade object to prevent UI from breaking
+            return {
+              id: 'error-' + Math.random().toString(36).substr(2, 9),
+              symbol: 'ERROR',
+              side: 'BUY' as const,
+              quantity: 0,
+              price: 0,
+              value: 0,
+              status: 'ERROR',
+              createdAt: new Date().toISOString()
+            };
+          }
+        });
+      } catch (error) {
+        console.error('[Trades] Error fetching trades:', error);
+        throw error; // Re-throw to let React Query handle it
       }
-      return res.data; // ✅ always an array now
     },
   });
   

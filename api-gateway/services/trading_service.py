@@ -1,0 +1,433 @@
+"""
+Trading service for managing trading transactions
+"""
+import uuid
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional, List, Dict, Any
+
+from sqlalchemy import select, update, and_, func, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from models import (
+    TradingTransaction, Portfolio, Asset, PortfolioHolding, 
+    TransactionType, TransactionStatus, OrderType
+)
+from config.database import get_db_session, DatabaseQuery, CacheManager
+
+
+class TradingService:
+    """Service class for trading-related operations"""
+
+    @staticmethod
+    def calculate_fees(amount: Decimal, transaction_type: TransactionType) -> Decimal:
+        """Calculate trading fees - 0.1% of transaction amount, minimum $1"""
+        fee_percentage = Decimal('0.001')
+        calculated_fee = amount * fee_percentage
+        return max(calculated_fee, Decimal('1.00'))
+
+    @staticmethod
+    async def create_transaction(transaction_data: Dict[str, Any]) -> TradingTransaction:
+        """Create and execute a new trading transaction"""
+        async with get_db_session() as session:
+            # Calculate amounts
+            quantity = Decimal(str(transaction_data['quantity']))
+            price_per_unit = Decimal(str(transaction_data['price_per_unit']))
+            total_amount = quantity * price_per_unit
+            
+            fees = TradingService.calculate_fees(total_amount, transaction_data['transaction_type'])
+            net_amount = total_amount + fees if transaction_data['transaction_type'] == TransactionType.BUY else total_amount - fees
+            
+            # Create transaction
+            transaction = TradingTransaction(
+                user_id=transaction_data['user_id'],
+                portfolio_id=transaction_data['portfolio_id'],
+                asset_id=transaction_data['asset_id'],
+                transaction_type=transaction_data['transaction_type'],
+                quantity=quantity,
+                price_per_unit=price_per_unit,
+                total_amount=total_amount,
+                fees=fees,
+                net_amount=net_amount,
+                order_type=transaction_data.get('order_type', OrderType.MARKET),
+                notes=transaction_data.get('notes'),
+                status=TransactionStatus.PENDING
+            )
+            
+            session.add(transaction)
+            await session.flush()  # Get the transaction ID
+            
+            # Execute the transaction
+            await TradingService._execute_transaction(session, transaction)
+            
+            await session.commit()
+            await session.refresh(transaction)
+            
+            return transaction
+
+    @staticmethod
+    async def _execute_transaction(session: AsyncSession, transaction: TradingTransaction):
+        """Execute a trading transaction - update holdings and portfolio"""
+        # Update transaction status
+        transaction.status = TransactionStatus.EXECUTED
+        transaction.settlement_date = datetime.utcnow()
+        
+        # Get existing holding
+        holding_result = await session.execute(
+            select(PortfolioHolding).where(
+                and_(
+                    PortfolioHolding.portfolio_id == transaction.portfolio_id,
+                    PortfolioHolding.asset_id == transaction.asset_id
+                )
+            )
+        )
+        existing_holding = holding_result.scalar_one_or_none()
+        
+        if existing_holding:
+            await TradingService._update_existing_holding(session, existing_holding, transaction)
+        elif transaction.transaction_type == TransactionType.BUY:
+            await TradingService._create_new_holding(session, transaction)
+        else:
+            raise ValueError("Cannot sell asset that is not owned")
+        
+        # Update portfolio cash balance
+        await TradingService._update_portfolio_cash(session, transaction)
+        
+        # Update portfolio total value
+        await TradingService._update_portfolio_values(session, transaction.portfolio_id)
+
+    @staticmethod
+    async def _update_existing_holding(session: AsyncSession, holding: PortfolioHolding, transaction: TradingTransaction):
+        """Update existing portfolio holding"""
+        if transaction.transaction_type == TransactionType.BUY:
+            # Add to position
+            new_quantity = holding.quantity + transaction.quantity
+            new_total_cost = holding.total_cost + (transaction.quantity * transaction.price_per_unit)
+            new_average_cost = new_total_cost / new_quantity if new_quantity > 0 else Decimal('0')
+            
+            holding.quantity = new_quantity
+            holding.total_cost = new_total_cost
+            holding.average_cost = new_average_cost
+            
+        else:  # SELL
+            if holding.quantity < transaction.quantity:
+                raise ValueError("Insufficient quantity to sell")
+            
+            new_quantity = holding.quantity - transaction.quantity
+            sold_cost = holding.average_cost * transaction.quantity
+            new_total_cost = holding.total_cost - sold_cost
+            realized_pnl = (transaction.price_per_unit - holding.average_cost) * transaction.quantity
+            
+            holding.quantity = new_quantity
+            holding.total_cost = new_total_cost if new_quantity > 0 else Decimal('0')
+            holding.realized_pnl = (holding.realized_pnl or Decimal('0')) + realized_pnl
+            
+            if new_quantity == 0:
+                holding.average_cost = Decimal('0')
+        
+        holding.last_updated = datetime.utcnow()
+
+    @staticmethod
+    async def _create_new_holding(session: AsyncSession, transaction: TradingTransaction):
+        """Create new portfolio holding"""
+        total_cost = transaction.quantity * transaction.price_per_unit
+        
+        holding = PortfolioHolding(
+            portfolio_id=transaction.portfolio_id,
+            asset_id=transaction.asset_id,
+            quantity=transaction.quantity,
+            average_cost=transaction.price_per_unit,
+            total_cost=total_cost
+        )
+        
+        session.add(holding)
+
+    @staticmethod
+    async def _update_portfolio_cash(session: AsyncSession, transaction: TradingTransaction):
+        """Update portfolio cash balance"""
+        cash_change = -transaction.net_amount if transaction.transaction_type == TransactionType.BUY else transaction.net_amount
+        
+        await session.execute(
+            update(Portfolio)
+            .where(Portfolio.id == transaction.portfolio_id)
+            .values(
+                cash_balance=Portfolio.cash_balance + cash_change,
+                updated_at=datetime.utcnow()
+            )
+        )
+
+    @staticmethod
+    async def _update_portfolio_values(session: AsyncSession, portfolio_id: uuid.UUID):
+        """Update portfolio holdings current values and total portfolio value"""
+        # Update holding values based on current asset prices
+        update_holdings_query = text("""
+            UPDATE portfolio_holdings 
+            SET 
+                current_value = portfolio_holdings.quantity * assets.current_price,
+                unrealized_pnl = (portfolio_holdings.quantity * assets.current_price) - portfolio_holdings.total_cost,
+                last_updated = CURRENT_TIMESTAMP
+            FROM assets
+            WHERE portfolio_holdings.asset_id = assets.id 
+                AND portfolio_holdings.portfolio_id = :portfolio_id
+        """)
+        
+        await session.execute(update_holdings_query, {"portfolio_id": portfolio_id})
+        
+        # Update portfolio total value
+        update_portfolio_query = text("""
+            UPDATE portfolios 
+            SET 
+                total_value = portfolios.cash_balance + COALESCE((
+                    SELECT SUM(current_value) 
+                    FROM portfolio_holdings 
+                    WHERE portfolio_id = :portfolio_id AND quantity > 0
+                ), 0),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :portfolio_id
+        """)
+        
+        await session.execute(update_portfolio_query, {"portfolio_id": portfolio_id})
+
+    @staticmethod
+    async def get_transactions_by_user(user_id: uuid.UUID, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get transactions for a user"""
+        query = """
+        SELECT 
+            t.*,
+            a.symbol,
+            a.name as asset_name,
+            a.asset_type,
+            p.name as portfolio_name
+        FROM trading_transactions t
+        JOIN assets a ON t.asset_id = a.id
+        JOIN portfolios p ON t.portfolio_id = p.id
+        WHERE t.user_id = $1
+        ORDER BY t.transaction_date DESC
+        LIMIT $2 OFFSET $3
+        """
+        
+        result = await DatabaseQuery.execute_query(query, [user_id, limit, offset])
+        return [dict(row) for row in result]
+
+    @staticmethod
+    async def get_transactions_by_portfolio(portfolio_id: uuid.UUID, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get transactions for a portfolio"""
+        query = """
+        SELECT 
+            t.*,
+            a.symbol,
+            a.name as asset_name,
+            a.asset_type
+        FROM trading_transactions t
+        JOIN assets a ON t.asset_id = a.id
+        WHERE t.portfolio_id = $1
+        ORDER BY t.transaction_date DESC
+        LIMIT $2 OFFSET $3
+        """
+        
+        result = await DatabaseQuery.execute_query(query, [portfolio_id, limit, offset])
+        return [dict(row) for row in result]
+
+    @staticmethod
+    async def get_transaction_by_id(transaction_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        """Get transaction by ID with related data"""
+        query = """
+        SELECT 
+            t.*,
+            a.symbol,
+            a.name as asset_name,
+            a.asset_type,
+            p.name as portfolio_name,
+            u.username
+        FROM trading_transactions t
+        JOIN assets a ON t.asset_id = a.id
+        JOIN portfolios p ON t.portfolio_id = p.id
+        JOIN users u ON t.user_id = u.id
+        WHERE t.id = $1
+        """
+        
+        result = await DatabaseQuery.execute_query(query, [transaction_id], fetch_one=True)
+        return dict(result) if result else None
+
+    @staticmethod
+    async def cancel_transaction(transaction_id: uuid.UUID, user_id: uuid.UUID) -> Optional[TradingTransaction]:
+        """Cancel a pending transaction"""
+        async with get_db_session() as session:
+            result = await session.execute(
+                select(TradingTransaction).where(
+                    and_(
+                        TradingTransaction.id == transaction_id,
+                        TradingTransaction.user_id == user_id,
+                        TradingTransaction.status == TransactionStatus.PENDING
+                    )
+                )
+            )
+            transaction = result.scalar_one_or_none()
+            
+            if transaction:
+                transaction.status = TransactionStatus.CANCELLED
+                transaction.updated_at = datetime.utcnow()
+                await session.commit()
+                
+            return transaction
+
+    @staticmethod
+    async def get_transaction_stats(user_id: uuid.UUID, portfolio_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
+        """Get transaction statistics"""
+        conditions = ["t.user_id = $1", "t.status = 'executed'"]
+        params = [user_id]
+        
+        if portfolio_id:
+            conditions.append("t.portfolio_id = $2")
+            params.append(portfolio_id)
+        
+        where_clause = " AND ".join(conditions)
+        
+        query = f"""
+        SELECT 
+            COUNT(*) as total_transactions,
+            COUNT(CASE WHEN transaction_type = 'buy' THEN 1 END) as buy_transactions,
+            COUNT(CASE WHEN transaction_type = 'sell' THEN 1 END) as sell_transactions,
+            COALESCE(SUM(CASE WHEN transaction_type = 'buy' THEN total_amount ELSE 0 END), 0) as total_bought,
+            COALESCE(SUM(CASE WHEN transaction_type = 'sell' THEN total_amount ELSE 0 END), 0) as total_sold,
+            COALESCE(SUM(fees), 0) as total_fees,
+            COALESCE(AVG(total_amount), 0) as avg_transaction_size
+        FROM trading_transactions t
+        WHERE {where_clause}
+        """
+        
+        result = await DatabaseQuery.execute_query(query, params, fetch_one=True)
+        return dict(result) if result else {}
+
+    @staticmethod
+    async def get_recent_activity(user_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent trading activity"""
+        query = """
+        SELECT 
+            t.id,
+            t.transaction_type,
+            t.quantity,
+            t.price_per_unit,
+            t.total_amount,
+            t.transaction_date,
+            t.status,
+            a.symbol,
+            a.name as asset_name,
+            p.name as portfolio_name
+        FROM trading_transactions t
+        JOIN assets a ON t.asset_id = a.id
+        JOIN portfolios p ON t.portfolio_id = p.id
+        WHERE t.user_id = $1
+        ORDER BY t.transaction_date DESC
+        LIMIT $2
+        """
+        
+        result = await DatabaseQuery.execute_query(query, [user_id, limit])
+        return [dict(row) for row in result]
+
+    @staticmethod
+    async def get_portfolio_performance_history(portfolio_id: uuid.UUID, days: int = 30) -> List[Dict[str, Any]]:
+        """Get portfolio performance history"""
+        query = """
+        WITH daily_values AS (
+            SELECT 
+                DATE(t.transaction_date) as date,
+                p.total_value,
+                COALESCE(SUM(
+                    CASE 
+                        WHEN t.transaction_type = 'buy' THEN -t.net_amount 
+                        ELSE t.net_amount 
+                    END
+                ), 0) as daily_flow
+            FROM portfolios p
+            LEFT JOIN trading_transactions t ON p.id = t.portfolio_id 
+                AND t.status = 'executed'
+                AND t.transaction_date >= CURRENT_DATE - INTERVAL '%s days'
+            WHERE p.id = $1
+            GROUP BY DATE(t.transaction_date), p.total_value
+            ORDER BY date DESC
+        )
+        SELECT * FROM daily_values LIMIT $2
+        """ % days
+        
+        result = await DatabaseQuery.execute_query(query, [portfolio_id, days])
+        return [dict(row) for row in result]
+
+    @staticmethod
+    async def validate_transaction(transaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate transaction data before execution"""
+        errors = []
+        
+        # Check if portfolio exists and belongs to user
+        portfolio_query = """
+        SELECT cash_balance 
+        FROM portfolios 
+        WHERE id = $1 AND user_id = $2
+        """
+        
+        portfolio_result = await DatabaseQuery.execute_query(
+            portfolio_query, 
+            [transaction_data['portfolio_id'], transaction_data['user_id']], 
+            fetch_one=True
+        )
+        
+        if not portfolio_result:
+            errors.append("Portfolio not found or access denied")
+            return {"valid": False, "errors": errors}
+        
+        # Check if asset exists and is active
+        asset_query = """
+        SELECT current_price, is_active 
+        FROM assets 
+        WHERE id = $1
+        """
+        
+        asset_result = await DatabaseQuery.execute_query(
+            asset_query, 
+            [transaction_data['asset_id']], 
+            fetch_one=True
+        )
+        
+        if not asset_result:
+            errors.append("Asset not found")
+        elif not asset_result['is_active']:
+            errors.append("Asset is not currently tradeable")
+        
+        # For buy orders, check sufficient cash
+        if transaction_data['transaction_type'] == TransactionType.BUY:
+            quantity = Decimal(str(transaction_data['quantity']))
+            price = Decimal(str(transaction_data['price_per_unit']))
+            total_amount = quantity * price
+            fees = TradingService.calculate_fees(total_amount, TransactionType.BUY)
+            required_cash = total_amount + fees
+            
+            if portfolio_result['cash_balance'] < required_cash:
+                errors.append(f"Insufficient cash. Required: {required_cash}, Available: {portfolio_result['cash_balance']}")
+        
+        # For sell orders, check sufficient holdings
+        elif transaction_data['transaction_type'] == TransactionType.SELL:
+            holding_query = """
+            SELECT quantity 
+            FROM portfolio_holdings 
+            WHERE portfolio_id = $1 AND asset_id = $2
+            """
+            
+            holding_result = await DatabaseQuery.execute_query(
+                holding_query, 
+                [transaction_data['portfolio_id'], transaction_data['asset_id']], 
+                fetch_one=True
+            )
+            
+            available_quantity = holding_result['quantity'] if holding_result else Decimal('0')
+            required_quantity = Decimal(str(transaction_data['quantity']))
+            
+            if available_quantity < required_quantity:
+                errors.append(f"Insufficient quantity. Required: {required_quantity}, Available: {available_quantity}")
+        
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "portfolio_cash": float(portfolio_result['cash_balance']),
+            "asset_price": float(asset_result['current_price']) if asset_result else 0
+        }

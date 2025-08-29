@@ -4,26 +4,39 @@ services:
   api-gateway:
     build:
       context: ./api-gateway
+      dockerfile: Dockerfile
     container_name: api-gateway
     ports:
       - "8000:8000"
     networks:
       - trading-net
     environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://trading_user:dev_password_123@pgbouncer:6432/trading_dev
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-here-change-in-production}
+      - RABBITMQ_URL=amqp://trading_user:dev_password_123@rabbitmq:5672/
       - ALPACA_API_KEY=${ALPACA_API_KEY}
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
-      - ALPACA_BASE_URL=${ALPACA_BASE_URL}
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - DATABASE_URL=${DATABASE_URL} 
+      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      - ZERODHA_API_KEY=${ZERODHA_API_KEY}
+      - ZERODHA_SECRET_KEY=${ZERODHA_SECRET_KEY}
+      - CORS_ORIGINS=http://localhost:3000,http://web-ui:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started 
 
 
   web-ui:
     build:
       context: ./web-ui
+      dockerfile: Dockerfile
     container_name: web-ui
     ports:
       - "3000:3000"
@@ -31,24 +44,109 @@ services:
       - trading-net
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_WS_URL=ws://localhost:8000/ws
+      - NODE_ENV=development
+    depends_on:
+      - api-gateway
 
-  db:
-    image: postgres:16
-    container_name: postgres-db
-    restart: always
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading_postgres_dev
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_DB: trading_dev
+      POSTGRES_USER: trading_user
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_MULTIPLE_DATABASES: trading_dev,trading_test
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/backups:/backups
     networks:
       - trading-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading_user -d trading_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PgBouncer Connection Pooler
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: trading_pgbouncer_dev
+    environment:
+      DATABASES_HOST: postgres
+      DATABASES_PORT: 5432
+      DATABASES_USER: trading_user
+      DATABASES_PASSWORD: dev_password_123
+      DATABASES_DBNAME: trading_dev
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 25
+      DEFAULT_POOL_SIZE: 5
+      MIN_POOL_SIZE: 0
+      RESERVE_POOL_SIZE: 1
+      SERVER_LIFETIME: 3600
+      SERVER_IDLE_TIMEOUT: 600
+      LOG_CONNECTIONS: 1
+      LOG_DISCONNECTIONS: 1
+      LOG_POOLER_ERRORS: 1
+      AUTH_TYPE: md5
+      AUTH_FILE: /etc/pgbouncer/userlist.txt
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trading-net
+    restart: unless-stopped
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: trading_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - trading-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # RabbitMQ for message queuing
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: trading_rabbitmq_dev
+    environment:
+      RABBITMQ_DEFAULT_USER: trading_user
+      RABBITMQ_DEFAULT_PASS: dev_password_123
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - trading-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
 volumes:
-  pgdata:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
 
 networks:
   trading-net:

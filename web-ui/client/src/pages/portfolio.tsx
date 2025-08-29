@@ -11,6 +11,16 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 export default function Portfolio() {
   const { data: positions, isLoading } = useQuery<Position[]>({
     queryKey: ["/api/portfolios", "portfolio-id", "positions"],
+    queryFn: async () => {
+      const response = await fetch("/api/portfolios/portfolio-id/positions");
+      const apiResponse = await response.json();
+      
+      if (!apiResponse.success || !Array.isArray(apiResponse.data)) {
+        throw new Error("Failed to fetch positions");
+      }
+      
+      return apiResponse.data;
+    },
   });
 
   const formatCurrency = (value: string | number) => {
@@ -87,6 +97,8 @@ export default function Portfolio() {
                             <td className="py-4 text-sm font-medium text-white">
                               {position.symbol}
                             </td>
+
+                            
                             <td className="py-4 text-sm text-white">
                               {parseFloat(position.quantity).toLocaleString()}
                             </td>

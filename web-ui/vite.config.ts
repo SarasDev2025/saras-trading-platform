@@ -23,9 +23,14 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: "http://api-gateway:8000",
         changeOrigin: true,
         rewrite: p => p.replace(/^\/api/, ""),
+        configure: (proxy, options) => {
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            console.log('Proxying request:', req.method, req.url, 'to', options.target);
+          });
+        }
       },
     },
   },

@@ -29,13 +29,10 @@ def validate_uuid(uuid_string: str) -> str:
         # Return demo portfolio ID for placeholder values
         return "87654321-4321-4321-4321-210987654321"
 
-
 @router.get("", response_model=APIResponse)
 async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
-    """Get smallcases for the current user"""
+    """Get all available smallcases (not just user-created ones)"""
     try:
-        user_id = get_current_user_id()
-
         result = await db.execute(text("""
             SELECT
                 s.id,
@@ -53,12 +50,12 @@ async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
             FROM smallcases s
             LEFT JOIN smallcase_constituents sc ON s.id = sc.smallcase_id AND sc.is_active = true
             LEFT JOIN assets a ON sc.asset_id = a.id
-            WHERE s.is_active = true AND s.created_by = :user_id
+            WHERE s.is_active = true
             GROUP BY s.id, s.name, s.description, s.category, s.theme, s.risk_level,
                      s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active
             ORDER BY s.created_at DESC
-        """), {"user_id": user_id})
-
+        """))
+        
         smallcases = []
         rows = result.fetchall()
 

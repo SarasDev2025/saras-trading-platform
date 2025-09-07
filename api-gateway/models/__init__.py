@@ -6,7 +6,8 @@ from uuid import uuid4
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional, List
+from pydantic import BaseModel
+from typing import Optional, Any, List
 
 from sqlalchemy import (
     Column, String, DateTime, Boolean, Numeric, Text, Integer,
@@ -128,7 +129,7 @@ class Portfolio(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="portfolios")
+    user: Mapped["User"] = relationship("User", back_populates="portfolios", cascade="all, delete-orphan")
     holdings: Mapped[List["PortfolioHolding"]] = relationship("PortfolioHolding", back_populates="portfolio", cascade="all, delete-orphan")
     trading_transactions: Mapped[List["TradingTransaction"]] = relationship("TradingTransaction", back_populates="portfolio", cascade="all, delete-orphan")
 
@@ -357,24 +358,9 @@ class UserSmallcaseInvestment(Base):
         return f"<UserSmallcaseInvestment(id={self.id}, user_id={self.user_id}, smallcase_id={self.smallcase_id}, amount={self.investment_amount})>"
 
 
-# Export all models
-__all__ = [
-    "Base",
-    "User",
-    "Portfolio", 
-    "Asset",
-    "TradingTransaction",
-    "PortfolioHolding",
-    "PriceHistory",
-    "UserSession",
-    "Smallcase",
-    "SmallcaseConstituent", 
-    "UserSmallcaseInvestment",
-    "KYCStatus",
-    "AccountStatus",
-    "AssetType",
-    "TransactionType",
-    "TransactionStatus",
-    "OrderType",
-    "IntervalType"
-]
+# API Response models
+class APIResponse(BaseModel):
+    success: bool
+    data: Optional[Any] = None
+    message: Optional[str] = None
+    error: Optional[str] = None

@@ -12,6 +12,7 @@ import Algorithms from "./pages/algorithms";
 import Strategies from "./pages/strategies";
 import Analytics from "./pages/analytics";
 import Settings from "./pages/settings";
+import Smallcases from "./pages/smallcases";
 
 function Router() {
   return (
@@ -23,6 +24,7 @@ function Router() {
       <Route path="/strategies" component={Strategies} />
       <Route path="/analytics" component={Analytics} />
       <Route path="/settings" component={Settings} />
+      <Route path="/smallcases" component={Smallcases} />
       <Route component={NotFound} />
     </Switch>
   );

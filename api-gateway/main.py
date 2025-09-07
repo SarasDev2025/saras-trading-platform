@@ -6,11 +6,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import redis.asyncio as redis
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 from config.database import Base
-from routers import auth_router, portfolio_router, alpaca_router, info_router, trade_router
+from routers import auth_router, portfolio_router, alpaca_router, info_router, trade_router, smallcase_router
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 
 # Configure logging
@@ -186,7 +186,7 @@ async def websocket_endpoint(websocket: WebSocket):
 from routers import broker_router
 app.include_router(auth_router.router, prefix="/auth", tags=["Authentication"])
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
-#app.include_router(smallcase_router.router, tags=["Smallcases"])
+app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
 app.include_router(alpaca_router.router, prefix="/alpaca", tags=["Alpaca Broker"])
 app.include_router(info_router.router, prefix="/platform", tags=["Platform Info"])
 app.include_router(trade_router.router, prefix="/trade", tags=["Trading"])

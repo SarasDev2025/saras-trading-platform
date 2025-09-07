@@ -8,7 +8,8 @@ import {
   BarChart3, 
   Settings,
   LogOut,
-  Activity
+  Activity,
+  Package
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,7 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Portfolio", href: "/portfolio", icon: Wallet },
   { name: "Trading", href: "/trading", icon: TrendingUp },
+  { name: "Smallcases", href: "/smallcases", icon: Package },
   { name: "Algorithms", href: "/algorithms", icon: Bot },
   { name: "Strategies", href: "/strategies", icon: Target },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },

@@ -12,7 +12,7 @@ import uuid
 from config.database import get_db
 from models import APIResponse
 
-router = APIRouter(prefix="/smallcases", tags=["smallcases"])
+router = APIRouter(tags=["smallcases"])
 
 
 def get_current_user_id() -> str:
@@ -31,11 +31,13 @@ def validate_uuid(uuid_string: str) -> str:
 
 
 @router.get("", response_model=APIResponse)
-async def get_smallcases(db: AsyncSession = Depends(get_db)):
-    """Get all available smallcases"""
+async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
+    """Get smallcases for the current user"""
     try:
+        user_id = get_current_user_id()
+
         result = await db.execute(text("""
-            SELECT 
+            SELECT
                 s.id,
                 s.name,
                 s.description,
@@ -51,15 +53,15 @@ async def get_smallcases(db: AsyncSession = Depends(get_db)):
             FROM smallcases s
             LEFT JOIN smallcase_constituents sc ON s.id = sc.smallcase_id AND sc.is_active = true
             LEFT JOIN assets a ON sc.asset_id = a.id
-            WHERE s.is_active = true
-            GROUP BY s.id, s.name, s.description, s.category, s.theme, s.risk_level, 
+            WHERE s.is_active = true AND s.created_by = :user_id
+            GROUP BY s.id, s.name, s.description, s.category, s.theme, s.risk_level,
                      s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active
             ORDER BY s.created_at DESC
-        """))
-        
+        """), {"user_id": user_id})
+
         smallcases = []
         rows = result.fetchall()
-        
+
         for row in rows:
             smallcases.append({
                 "id": str(row.id),
@@ -75,7 +77,7 @@ async def get_smallcases(db: AsyncSession = Depends(get_db)):
                 "estimatedNAV": float(row.estimated_nav),
                 "isActive": row.is_active
             })
-        
+
         return APIResponse(success=True, data=smallcases)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch smallcases: {str(e)}")

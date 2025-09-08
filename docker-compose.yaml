@@ -143,6 +143,20 @@ services:
       retries: 3
     restart: unless-stopped
 
+  pgadmin:
+      image: dpage/pgadmin4:latest
+      container_name: trading_pgadmin
+      environment:
+        PGADMIN_DEFAULT_EMAIL: admin@trading.com
+        PGADMIN_DEFAULT_PASSWORD: admin123
+        PGADMIN_CONFIG_SERVER_MODE: 'False'
+      ports:
+        - "8080:80"
+      networks:
+        - trading-net
+      depends_on:
+        - postgres
+
 volumes:
   postgres_data:
   redis_data:
@@ -151,3 +165,4 @@ volumes:
 networks:
   trading-net:
     driver: bridge
+

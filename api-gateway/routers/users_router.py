@@ -140,53 +140,53 @@ async def register_user(user_data: UserRegistration):
             detail=f"Registration failed: {str(e)}"
         )
 
-@router.post("/login", response_model=APIResponse)
-async def login_user(login_data: UserLogin):
-    """Authenticate user and return token"""
-    try:
-        user = await UserService.authenticate_user(login_data.email, login_data.password)
+# @router.post("/login", response_model=APIResponse)
+# async def login_user(login_data: UserLogin):
+#     """Authenticate user and return token"""
+#     try:
+#         user = await UserService.authenticate_user(login_data.email, login_data.password)
         
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password"
-            )
+#         if not user:
+#             raise HTTPException(
+#                 status_code=status.HTTP_401_UNAUTHORIZED,
+#                 detail="Invalid email or password"
+#             )
         
-        if user.account_status != AccountStatus.ACTIVE:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Account is suspended or closed"
-            )
+#         if user.account_status != AccountStatus.ACTIVE:
+#             raise HTTPException(
+#                 status_code=status.HTTP_401_UNAUTHORIZED,
+#                 detail="Account is suspended or closed"
+#             )
         
-        # Create access token
-        access_token = create_access_token(str(user.id))
+#         # Create access token
+#         access_token = create_access_token(str(user.id))
         
-        # Prepare response data
-        user_dict = {
-            "id": str(user.id),
-            "email": user.email,
-            "username": user.username,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email_verified": user.email_verified,
-            "kyc_status": user.kyc_status,
-            "last_login": user.last_login
-        }
+#         # Prepare response data
+#         user_dict = {
+#             "id": str(user.id),
+#             "email": user.email,
+#             "username": user.username,
+#             "first_name": user.first_name,
+#             "last_name": user.last_name,
+#             "email_verified": user.email_verified,
+#             "kyc_status": user.kyc_status,
+#             "last_login": user.last_login
+#         }
         
-        return APIResponse(
-            success=True,
-            data=user_dict,
-            token=access_token,
-            message="Login successful"
-        )
+#         return APIResponse(
+#             success=True,
+#             data=user_dict,
+#             token=access_token,
+#             message="Login successful"
+#         )
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}"
-        )
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Login failed: {str(e)}"
+#         )
 
 # User profile management
 @router.get("/profile", response_model=APIResponse)

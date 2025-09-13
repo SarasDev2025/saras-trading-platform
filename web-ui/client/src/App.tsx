@@ -1,9 +1,16 @@
+// =====================================================
+// Updated App.tsx with Authentication
+// =====================================================
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/hooks/use-theme";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute, PublicRoute } from "@/components/auth";
+
+// Existing pages
 import NotFound from "./pages/not-found";
 import Dashboard from "./pages/dashboard";
 import Portfolio from "./pages/portfolio";
@@ -14,17 +21,80 @@ import Analytics from "./pages/analytics";
 import Settings from "./pages/settings";
 import Smallcases from "./pages/smallcases";
 
+// New auth pages
+import { LoginPage, RegisterPage, ForgotPasswordPage } from "./pages/auth";
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/portfolio" component={Portfolio} />
-      <Route path="/trading" component={Trading} />
-      <Route path="/algorithms" component={Algorithms} />
-      <Route path="/strategies" component={Strategies} />
-      <Route path="/analytics" component={Analytics} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/smallcases" component={Smallcases} />
+      {/* Public Auth Routes */}
+      <Route path="/auth/login">
+        <PublicRoute>
+          <LoginPage />
+        </PublicRoute>
+      </Route>
+      
+      <Route path="/auth/register">
+        <PublicRoute>
+          <RegisterPage />
+        </PublicRoute>
+      </Route>
+      
+      <Route path="/auth/forgot-password">
+        <PublicRoute>
+          <ForgotPasswordPage />
+        </PublicRoute>
+      </Route>
+
+      {/* Protected Routes */}
+      <Route path="/">
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/portfolio">
+        <ProtectedRoute>
+          <Portfolio />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/trading">
+        <ProtectedRoute>
+          <Trading />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/algorithms">
+        <ProtectedRoute>
+          <Algorithms />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/strategies">
+        <ProtectedRoute>
+          <Strategies />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/analytics">
+        <ProtectedRoute>
+          <Analytics />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/settings">
+        <ProtectedRoute>
+          <Settings />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/smallcases">
+        <ProtectedRoute>
+          <Smallcases />
+        </ProtectedRoute>
+      </Route>
+      
       <Route component={NotFound} />
     </Switch>
   );
@@ -35,10 +105,12 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <TooltipProvider>
-          <div className="trading-platform">
-            <Toaster />
-            <Router />
-          </div>
+          <AuthProvider>
+            <div className="trading-platform">
+              <Toaster />
+              <Router />
+            </div>
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

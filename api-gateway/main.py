@@ -184,7 +184,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Include routers
 from routers import broker_router
-app.include_router(auth_router.router, prefix="/auth", tags=["Authentication"])
+app.include_router(auth_router.router, tags=["Authentication"])
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
 app.include_router(alpaca_router.router, prefix="/alpaca", tags=["Alpaca Broker"])

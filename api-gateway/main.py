@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 from config.database import Base
-from routers import auth_router, portfolio_router, alpaca_router, info_router, trade_router, smallcase_router
+from routers import auth_router, portfolio_router, alpaca_router, info_router, trade_router, smallcase_router, rebalancing_router
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 
 # Configure logging
@@ -191,6 +191,9 @@ app.include_router(alpaca_router.router, prefix="/alpaca", tags=["Alpaca Broker"
 app.include_router(info_router.router, prefix="/platform", tags=["Platform Info"])
 app.include_router(trade_router.router, prefix="/trade", tags=["Trading"])
 app.include_router(broker_router.router, prefix="/brokers", tags=["Broker Management"])
+#app.include_router(rebalancing_router.router, prefix="/smallcases", tags=["Rebalancing"])
+app.include_router(rebalancing_router.router, tags=["Rebalancing"])
+
 
 # Dependency injection for database sessions
 async def get_db_session():

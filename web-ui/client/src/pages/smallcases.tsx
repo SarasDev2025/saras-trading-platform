@@ -1,3 +1,5 @@
+// src/pages/smallcases.tsx
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +13,7 @@ import { apiRequest } from "@/lib/axios";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { Badge } from "@/components/ui/badge";
+import { SmallcaseModificationModal } from "@/components/smallcases/SmallcaseModificationModal";
 import { TrendingUp, TrendingDown, Eye, Plus, Edit, ArrowUpRight } from "lucide-react";
 
 type Smallcase = {
@@ -69,10 +72,15 @@ export default function SmallcasesPage() {
   const [isInvesting, setIsInvesting] = useState(false);
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [activeTab, setActiveTab] = useState<'available' | 'investments'>('available');
+  
+  // Modification Modal State
+  const [selectedInvestment, setSelectedInvestment] = useState<UserInvestment | null>(null);
+  const [isModificationOpen, setIsModificationOpen] = useState(false);
+  
   const { toast } = useToast();
 
   // Fetch user's existing investments
-  const { data: userInvestments = [], isLoading: isLoadingInvestments } = useQuery<UserInvestment[]>({
+  const { data: userInvestments = [], isLoading: isLoadingInvestments, refetch: refetchInvestments } = useQuery<UserInvestment[]>({
     queryKey: ['user-smallcase-investments'],
     queryFn: async () => {
       const response = await apiRequest.get('/smallcases/user/investments');
@@ -114,6 +122,23 @@ export default function SmallcasesPage() {
     }
   }, [smallcases, selectedSmallcase, activeTab]);
 
+  // Modification Handlers
+  const handleModify = (investment: UserInvestment) => {
+    setSelectedInvestment(investment);
+    setIsModificationOpen(true);
+  };
+
+  const handleApplyRebalancing = (result: any) => {
+    console.log('Rebalancing applied:', result);
+    toast({
+      title: "Rebalancing Applied",
+      description: `Your ${selectedInvestment?.smallcase.name} smallcase has been successfully rebalanced.`,
+    });
+    
+    // Refresh investments data
+    refetchInvestments();
+  };
+
   const handleInvest = async () => {
     if (!selectedSmallcase) return;
     
@@ -130,7 +155,10 @@ export default function SmallcasesPage() {
       });
       
       // Refresh investments data
-      window.location.reload(); // Simple refresh, you could use React Query invalidation instead
+      refetchInvestments();
+      
+      // Switch to investments tab to show the new investment
+      setActiveTab('investments');
     } catch (error: any) {
       console.error('Investment failed:', error);
       const errorMessage = error.response?.data?.detail || "Failed to process investment";
@@ -167,6 +195,15 @@ export default function SmallcasesPage() {
       });
     } finally {
       setIsAddingToWatchlist(false);
+    }
+  };
+
+  const handleAddMore = async (investment: UserInvestment) => {
+    // Set the smallcase and switch to available tab for additional investment
+    const smallcase = smallcases.find(sc => sc.id === investment.smallcase.id);
+    if (smallcase) {
+      setSelectedSmallcase(smallcase);
+      setActiveTab('available');
     }
   };
 
@@ -286,11 +323,20 @@ export default function SmallcasesPage() {
                         </div>
                         
                         <div className="flex gap-2 pt-2">
-                          <Button variant="outline" size="sm" className="flex-1">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="flex-1"
+                            onClick={() => handleModify(investment)}
+                          >
                             <Edit className="w-3 h-3 mr-1" />
                             Modify
                           </Button>
-                          <Button size="sm" className="flex-1">
+                          <Button 
+                            size="sm" 
+                            className="flex-1"
+                            onClick={() => handleAddMore(investment)}
+                          >
                             <Plus className="w-3 h-3 mr-1" />
                             Add More
                           </Button>
@@ -348,7 +394,7 @@ export default function SmallcasesPage() {
                 )}
               </div>
 
-              {/* Smallcase Details (Rest of your existing code for details view) */}
+              {/* Smallcase Details */}
               <div className="lg:col-span-2 space-y-6">
                 {selectedSmallcase ? (
                   <>
@@ -494,6 +540,14 @@ export default function SmallcasesPage() {
           )}
         </div>
       </main>
+
+      {/* Modification Modal */}
+      <SmallcaseModificationModal
+        investment={selectedInvestment}
+        isOpen={isModificationOpen}
+        onClose={() => setIsModificationOpen(false)}
+        onApplyRebalancing={handleApplyRebalancing}
+      />
     </div>
   );
 }

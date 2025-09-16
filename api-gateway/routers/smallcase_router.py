@@ -8,6 +8,9 @@ from sqlalchemy import text
 from typing import List, Dict, Any
 from uuid import UUID
 import uuid
+# Add the dependencies if not already imported
+from datetime import datetime
+#from auth_router import get_current_user  # Your auth dependency
 
 from config.database import get_db
 from models import APIResponse
@@ -55,7 +58,7 @@ async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
                      s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active
             ORDER BY s.created_at DESC
         """))
-        
+
         smallcases = []
         rows = result.fetchall()
 
@@ -163,6 +166,144 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch smallcase details: {str(e)}")
 
+# Add this to your existing smallcase router
+
+@router.get("/{smallcase_id}/composition", response_model=APIResponse)
+async def get_smallcase_composition(
+    smallcase_id: str, 
+    db: AsyncSession = Depends(get_db),
+    current_user_id=Depends(get_current_user_id)  # Ensure user is authenticated
+):
+    """Get smallcase composition with market data for modification/rebalancing"""
+    try:
+        # Verify smallcase exists
+        smallcase_check = await db.execute(text("""
+            SELECT s.id, s.name 
+            FROM smallcases s 
+            WHERE s.id = :smallcase_id AND s.is_active = true
+        """), {"smallcase_id": smallcase_id})
+        
+        smallcase_row = smallcase_check.fetchone()
+        if not smallcase_row:
+            raise HTTPException(status_code=404, detail="Smallcase not found")
+        
+        # Get constituents with market data from your schema
+        constituents_result = await db.execute(text("""
+            SELECT 
+                sc.id,
+                sc.weight_percentage as target_weight,
+                a.id as stock_id,
+                a.symbol,
+                a.name as stock_name,
+                a.current_price,
+                a.industry as sector,
+                a.pb_ratio,
+                a.dividend_yield,
+                a.beta,
+                -- Calculate mock market cap if not available
+                CASE 
+                    WHEN a.current_price IS NOT NULL 
+                    THEN CAST(a.current_price * 1000000 as BIGINT)
+                    ELSE 1000000000 
+                END as market_cap
+            FROM smallcase_constituents sc
+            JOIN assets a ON sc.asset_id = a.id
+            WHERE sc.smallcase_id = :smallcase_id 
+            AND sc.is_active = true 
+            AND a.is_active = true
+            ORDER BY sc.weight_percentage DESC
+        """), {"smallcase_id": smallcase_id})
+        
+        stocks = []
+        total_target_weight = 0
+        total_market_value = 0
+        
+        # Generate some mock performance data since you don't have performance table yet
+        import random
+        
+        for row in constituents_result.fetchall():
+            # Use beta and other indicators to generate realistic mock performance
+            beta = float(row.beta) if row.beta else 1.0
+            
+            # More volatile stocks (higher beta) have higher performance swings
+            volatility_factor = beta * 10
+            
+            mock_performance = {
+                "price_change_1d": round(random.uniform(-2 * beta, 2 * beta), 2),
+                "price_change_7d": round(random.uniform(-5 * beta, 5 * beta), 2),
+                "price_change_30d": round(random.uniform(-15 * beta, 15 * beta), 2),
+                "volatility_30d": round(max(5, volatility_factor + random.uniform(-3, 3)), 2)
+            }
+            
+            stock_data = {
+                "stock_id": str(row.stock_id),
+                "symbol": row.symbol,
+                "stock_name": row.stock_name,
+                "sector": row.sector or "General",
+                "current_price": float(row.current_price) if row.current_price else 100.0,
+                "market_cap": int(row.market_cap) if row.market_cap else 1000000000,
+                "target_weight": float(row.target_weight),
+                "volume_avg_30d": random.randint(100000, 2000000),  # Mock volume
+                "pb_ratio": float(row.pb_ratio) if row.pb_ratio else 2.5,
+                "dividend_yield": float(row.dividend_yield) if row.dividend_yield else 1.0,
+                "beta": float(row.beta) if row.beta else 1.0,
+                "performance": mock_performance
+            }
+            
+            stocks.append(stock_data)
+            total_target_weight += stock_data["target_weight"]
+            total_market_value += stock_data["current_price"] * stock_data["target_weight"] / 100
+        
+        composition = {
+            "smallcase_id": smallcase_id,
+            "total_stocks": len(stocks),
+            "total_target_weight": total_target_weight,
+            "total_market_value": total_market_value,
+            "stocks": stocks,
+            "last_updated": datetime.utcnow()
+        }
+        
+        return APIResponse(success=True, data=composition)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to fetch smallcase composition: {str(e)}"
+        )
+
+
+# Optional: If you want to create a performance tracking table later
+# You can run this SQL to add performance tracking:
+
+"""
+CREATE TABLE IF NOT EXISTS stock_performance (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stock_id UUID NOT NULL REFERENCES assets(id),
+    price_change_1d DECIMAL(8,2) DEFAULT 0,
+    price_change_7d DECIMAL(8,2) DEFAULT 0,
+    price_change_30d DECIMAL(8,2) DEFAULT 0,
+    volatility_30d DECIMAL(8,2) DEFAULT 15,
+    volume_avg_30d BIGINT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(stock_id)
+);
+
+-- Insert some sample performance data
+INSERT INTO stock_performance (stock_id, price_change_1d, price_change_7d, price_change_30d, volatility_30d, volume_avg_30d)
+SELECT 
+    id,
+    (RANDOM() * 4 - 2)::DECIMAL(8,2),  -- -2% to +2% daily
+    (RANDOM() * 10 - 5)::DECIMAL(8,2), -- -5% to +5% weekly  
+    (RANDOM() * 30 - 15)::DECIMAL(8,2), -- -15% to +15% monthly
+    (RANDOM() * 20 + 5)::DECIMAL(8,2),  -- 5% to 25% volatility
+    (RANDOM() * 1900000 + 100000)::BIGINT -- 100k to 2M volume
+FROM assets 
+WHERE asset_type = 'stock' AND is_active = true
+ON CONFLICT (stock_id) DO NOTHING;
+"""
 
 @router.get("/user/investments", response_model=APIResponse)
 async def get_user_smallcase_investments(db: AsyncSession = Depends(get_db)):

@@ -364,3 +364,35 @@ class APIResponse(BaseModel):
     data: Optional[Any] = None
     message: Optional[str] = None
     error: Optional[str] = None
+
+
+# models/__init__.py
+"""
+Pydantic models package
+"""
+
+from .rebalancing_models import (
+    RebalancingRequest,
+    RebalancingResponse,
+    ApplyRebalancingRequest,
+    ApplyRebalancingResult,
+    RebalancingStrategy,
+    PortfolioComposition,
+    StockComposition,
+    StockPerformance,
+    RebalancingSuggestion,
+    RebalancingSummary
+)
+
+__all__ = [
+    "RebalancingRequest",
+    "RebalancingResponse", 
+    "ApplyRebalancingRequest",
+    "ApplyRebalancingResult",
+    "RebalancingStrategy",
+    "PortfolioComposition",
+    "StockComposition", 
+    "StockPerformance",
+    "RebalancingSuggestion",
+    "RebalancingSummary"
+]

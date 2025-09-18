@@ -189,6 +189,7 @@ class RebalancingDBService:
                 detail=f"Failed to apply rebalancing: {str(e)}"
             )
     
+
     @staticmethod
     async def verify_user_access_to_smallcase(
         db: AsyncSession,
@@ -197,13 +198,13 @@ class RebalancingDBService:
     ) -> bool:
         """Verify if user has access to modify this smallcase (owns investment)"""
         try:
-            # Check if user has invested in this smallcase
+            # FIXED: Use correct table name 'user_smallcase_investments' instead of 'user_investments'
             result = await db.execute(text("""
-                SELECT ui.id 
-                FROM user_investments ui
-                WHERE ui.smallcase_id = :smallcase_id 
-                AND ui.user_id = :user_id
-                AND ui.status = 'active'
+                SELECT usi.id 
+                FROM user_smallcase_investments usi
+                WHERE usi.smallcase_id = :smallcase_id 
+                AND usi.user_id = :user_id
+                AND usi.status = 'active'
                 LIMIT 1
             """), {
                 "smallcase_id": smallcase_id,
@@ -212,9 +213,10 @@ class RebalancingDBService:
             
             return result.fetchone() is not None
             
-        except Exception:
+        except Exception as e:
+            print(f"ERROR in verify_user_access_to_smallcase: {e}")
             return False
-    
+        
     @staticmethod 
     async def log_rebalancing_activity(
         db: AsyncSession,

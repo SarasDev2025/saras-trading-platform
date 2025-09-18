@@ -2,26 +2,27 @@
 Smallcase router for managing curated investment themes and paper trading
 """
 
+# Fix for routers/smallcase_router.py
+# Replace the dummy authentication with real authentication
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import List, Dict, Any
 from uuid import UUID
 import uuid
-# Add the dependencies if not already imported
 from datetime import datetime
-#from auth_router import get_current_user  # Your auth dependency
 
 from config.database import get_db
+from routers.auth_router import get_current_user  # Import real auth
 from models import APIResponse
 
 router = APIRouter(tags=["smallcases"])
 
-
-def get_current_user_id() -> str:
-    """Get current user ID - returns demo user for now"""
-    return "12345678-1234-1234-1234-123456789012"
-
+# Remove the dummy function and import real auth
+# def get_current_user_id() -> str:
+#     """Get current user ID - returns demo user for now"""
+#     return "12345678-1234-1234-1234-123456789012"
 
 def validate_uuid(uuid_string: str) -> str:
     """Validate UUID string and return demo portfolio ID if invalid"""
@@ -32,6 +33,173 @@ def validate_uuid(uuid_string: str) -> str:
         # Return demo portfolio ID for placeholder values
         return "87654321-4321-4321-4321-210987654321"
 
+@router.get("/user/investments", response_model=APIResponse)
+async def get_user_investments(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)  # Use real auth
+):
+    """Get user's smallcase investments"""
+    try:
+        user_id = str(current_user.id)  # Use real user ID
+        
+        print(f"🔍 DEBUG: Fetching investments for user {user_id}")
+        
+        result = await db.execute(text("""
+            SELECT 
+                usi.id,
+                usi.investment_amount,
+                usi.units_purchased,
+                usi.purchase_price,
+                usi.current_value,
+                usi.unrealized_pnl,
+                usi.status,
+                usi.invested_at,
+                s.id as smallcase_id,
+                s.name as smallcase_name,
+                s.category,
+                s.theme,
+                s.risk_level,
+                p.id as portfolio_id,
+                p.name as portfolio_name
+            FROM user_smallcase_investments usi
+            JOIN smallcases s ON usi.smallcase_id = s.id
+            JOIN portfolios p ON usi.portfolio_id = p.id
+            WHERE usi.user_id = :user_id AND usi.status = 'active'
+            ORDER BY usi.invested_at DESC
+        """), {"user_id": user_id})
+        
+        investments = []
+        rows = result.fetchall()
+        
+        print(f"🔍 DEBUG: Found {len(rows)} investments for user {user_id}")
+        
+        for row in rows:
+            investments.append({
+                "id": str(row.id),
+                "investmentAmount": float(row.investment_amount),
+                "unitsPurchased": float(row.units_purchased),
+                "purchasePrice": float(row.purchase_price),
+                "currentValue": float(row.current_value) if row.current_value else 0,
+                "unrealizedPnL": float(row.unrealized_pnl) if row.unrealized_pnl else 0,
+                "status": row.status,
+                "investedAt": row.invested_at.isoformat(),
+                "smallcase": {
+                    "id": str(row.smallcase_id),
+                    "name": row.smallcase_name,
+                    "category": row.category,
+                    "theme": row.theme,
+                    "riskLevel": row.risk_level
+                },
+                "portfolio": {
+                    "id": str(row.portfolio_id),
+                    "name": row.portfolio_name
+                }
+            })
+        
+        return APIResponse(success=True, data=investments)
+    except Exception as e:
+        print(f"❌ ERROR fetching investments: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch user investments: {str(e)}")
+
+@router.post("/{smallcase_id}/invest", response_model=APIResponse)
+async def invest_in_smallcase(
+    smallcase_id: str, 
+    investment_data: Dict[str, Any], 
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)  # Use real auth
+):
+    """Invest in a smallcase (paper trading)"""
+    try:
+        user_id = str(current_user.id)  # Use real user ID
+        
+        # Get user's default portfolio
+        portfolio_result = await db.execute(text("""
+            SELECT id FROM portfolios 
+            WHERE user_id = :user_id 
+            ORDER BY is_default DESC, created_at ASC 
+            LIMIT 1
+        """), {"user_id": user_id})
+        
+        portfolio_row = portfolio_result.fetchone()
+        if not portfolio_row:
+            raise HTTPException(status_code=400, detail="No portfolio found for user")
+        
+        portfolio_id = str(portfolio_row.id)
+        investment_amount = float(investment_data.get("amount", 0))
+        
+        if investment_amount <= 0:
+            raise HTTPException(status_code=400, detail="Investment amount must be positive")
+        
+        # Get smallcase details
+        smallcase_result = await db.execute(text("""
+            SELECT minimum_investment, name FROM smallcases 
+            WHERE id = :smallcase_id AND is_active = true
+        """), {"smallcase_id": smallcase_id})
+        
+        smallcase_row = smallcase_result.fetchone()
+        if not smallcase_row:
+            raise HTTPException(status_code=404, detail="Smallcase not found")
+        
+        if investment_amount < float(smallcase_row.minimum_investment):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Minimum investment is ${smallcase_row.minimum_investment}"
+            )
+        
+        # Calculate NAV (simplified - using average of constituent prices)
+        nav_result = await db.execute(text("""
+            SELECT AVG(a.current_price * sc.weight_percentage / 100) as nav
+            FROM smallcase_constituents sc
+            JOIN assets a ON sc.asset_id = a.id
+            WHERE sc.smallcase_id = :smallcase_id AND sc.is_active = true
+        """), {"smallcase_id": smallcase_id})
+        
+        nav_row = nav_result.fetchone()
+        nav = float(nav_row.nav) if nav_row.nav else 100.0  # Default NAV
+        
+        units_purchased = investment_amount / nav
+        
+        # Create investment record
+        investment_id = str(uuid.uuid4())
+        await db.execute(text("""
+            INSERT INTO user_smallcase_investments 
+            (id, user_id, portfolio_id, smallcase_id, investment_amount, units_purchased, 
+             purchase_price, current_value, unrealized_pnl, status)
+            VALUES (:id, :user_id, :portfolio_id, :smallcase_id, :investment_amount, 
+                    :units_purchased, :purchase_price, :current_value, :unrealized_pnl, 'active')
+        """), {
+            "id": investment_id,
+            "user_id": user_id,
+            "portfolio_id": portfolio_id,
+            "smallcase_id": smallcase_id,
+            "investment_amount": investment_amount,
+            "units_purchased": units_purchased,
+            "purchase_price": nav,
+            "current_value": investment_amount,  # Initial value = investment amount
+            "unrealized_pnl": 0.0  # Initial P&L = 0
+        })
+        
+        await db.commit()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "investmentId": investment_id,
+                "amount": investment_amount,
+                "units": units_purchased,
+                "nav": nav
+            },
+            message=f"Successfully invested ${investment_amount} in {smallcase_row.name}"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        print(f"❌ ERROR creating investment: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create investment: {str(e)}")
+
+# Keep other endpoints the same but add real auth where needed
 @router.get("", response_model=APIResponse)
 async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
     """Get all available smallcases (not just user-created ones)"""
@@ -172,7 +340,7 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
 async def get_smallcase_composition(
     smallcase_id: str, 
     db: AsyncSession = Depends(get_db),
-    current_user_id=Depends(get_current_user_id)  # Ensure user is authenticated
+    current_user_id=Depends(get_current_user)  # Ensure user is authenticated
 ):
     """Get smallcase composition with market data for modification/rebalancing"""
     try:
@@ -304,147 +472,6 @@ FROM assets
 WHERE asset_type = 'stock' AND is_active = true
 ON CONFLICT (stock_id) DO NOTHING;
 """
-
-@router.get("/user/investments", response_model=APIResponse)
-async def get_user_smallcase_investments(db: AsyncSession = Depends(get_db)):
-    """Get user's smallcase investments"""
-    try:
-        user_id = get_current_user_id()
-        
-        result = await db.execute(text("""
-            SELECT 
-                usi.id,
-                usi.investment_amount,
-                usi.units_purchased,
-                usi.purchase_price,
-                usi.current_value,
-                usi.unrealized_pnl,
-                usi.status,
-                usi.invested_at,
-                s.id as smallcase_id,
-                s.name as smallcase_name,
-                s.category,
-                s.theme,
-                s.risk_level,
-                p.id as portfolio_id,
-                p.name as portfolio_name
-            FROM user_smallcase_investments usi
-            JOIN smallcases s ON usi.smallcase_id = s.id
-            JOIN portfolios p ON usi.portfolio_id = p.id
-            WHERE usi.user_id = :user_id AND usi.status = 'active'
-            ORDER BY usi.invested_at DESC
-        """), {"user_id": user_id})
-        
-        investments = []
-        rows = result.fetchall()
-        
-        for row in rows:
-            investments.append({
-                "id": str(row.id),
-                "investmentAmount": float(row.investment_amount),
-                "unitsPurchased": float(row.units_purchased),
-                "purchasePrice": float(row.purchase_price),
-                "currentValue": float(row.current_value) if row.current_value else 0,
-                "unrealizedPnL": float(row.unrealized_pnl) if row.unrealized_pnl else 0,
-                "status": row.status,
-                "investedAt": row.invested_at.isoformat(),
-                "smallcase": {
-                    "id": str(row.smallcase_id),
-                    "name": row.smallcase_name,
-                    "category": row.category,
-                    "theme": row.theme,
-                    "riskLevel": row.risk_level
-                },
-                "portfolio": {
-                    "id": str(row.portfolio_id),
-                    "name": row.portfolio_name
-                }
-            })
-        
-        return APIResponse(success=True, data=investments)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch user investments: {str(e)}")
-
-
-@router.post("/{smallcase_id}/invest", response_model=APIResponse)
-async def invest_in_smallcase(smallcase_id: str, investment_data: Dict[str, Any], db: AsyncSession = Depends(get_db)):
-    """Invest in a smallcase (paper trading)"""
-    try:
-        user_id = get_current_user_id()
-        portfolio_id = validate_uuid(investment_data.get("portfolio_id", "portfolio-id"))
-        investment_amount = float(investment_data.get("amount", 0))
-        
-        if investment_amount <= 0:
-            raise HTTPException(status_code=400, detail="Investment amount must be positive")
-        
-        # Get smallcase details
-        smallcase_result = await db.execute(text("""
-            SELECT minimum_investment, name FROM smallcases 
-            WHERE id = :smallcase_id AND is_active = true
-        """), {"smallcase_id": smallcase_id})
-        
-        smallcase_row = smallcase_result.fetchone()
-        if not smallcase_row:
-            raise HTTPException(status_code=404, detail="Smallcase not found")
-        
-        if investment_amount < float(smallcase_row.minimum_investment):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Minimum investment is ${smallcase_row.minimum_investment}"
-            )
-        
-        # Calculate NAV (simplified - using average of constituent prices)
-        nav_result = await db.execute(text("""
-            SELECT AVG(a.current_price * sc.weight_percentage / 100) as nav
-            FROM smallcase_constituents sc
-            JOIN assets a ON sc.asset_id = a.id
-            WHERE sc.smallcase_id = :smallcase_id AND sc.is_active = true
-        """), {"smallcase_id": smallcase_id})
-        
-        nav_row = nav_result.fetchone()
-        nav = float(nav_row.nav) if nav_row.nav else 100.0  # Default NAV
-        
-        units_purchased = investment_amount / nav
-        
-        # Create investment record
-        investment_id = str(uuid.uuid4())
-        await db.execute(text("""
-            INSERT INTO user_smallcase_investments 
-            (id, user_id, portfolio_id, smallcase_id, investment_amount, units_purchased, 
-             purchase_price, current_value, unrealized_pnl, status)
-            VALUES (:id, :user_id, :portfolio_id, :smallcase_id, :investment_amount, 
-                    :units_purchased, :purchase_price, :current_value, :unrealized_pnl, 'active')
-        """), {
-            "id": investment_id,
-            "user_id": user_id,
-            "portfolio_id": portfolio_id,
-            "smallcase_id": smallcase_id,
-            "investment_amount": investment_amount,
-            "units_purchased": units_purchased,
-            "purchase_price": nav,
-            "current_value": investment_amount,
-            "unrealized_pnl": 0.0
-        })
-        
-        await db.commit()
-        
-        return APIResponse(
-            success=True, 
-            data={
-                "investmentId": investment_id,
-                "smallcaseName": smallcase_row.name,
-                "investmentAmount": investment_amount,
-                "unitsPurchased": units_purchased,
-                "purchasePrice": nav,
-                "message": f"Successfully invested ${investment_amount:,.2f} in {smallcase_row.name}"
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to process investment: {str(e)}")
-
 
 @router.get("/categories/performance", response_model=APIResponse)
 async def get_category_performance(db: AsyncSession = Depends(get_db)):

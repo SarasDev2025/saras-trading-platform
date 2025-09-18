@@ -13,7 +13,7 @@ export const apiRequest = axios.create({
 // Add a request interceptor to include auth token if available
 apiRequest.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('auth_token');
+    const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

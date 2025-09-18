@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from config.database import get_db
-#from auth_router import get_current_user_id  # Your auth dependency
+from routers.auth_router import get_current_user  # Import the REAL auth dependency
 from models import APIResponse
 from models.rebalancing_models import (
     RebalancingRequest,
@@ -20,16 +20,11 @@ from services.rebalancing_db_service import RebalancingDBService
 
 router = APIRouter(prefix="/smallcases", tags=["Rebalancing"])
 
-
-def get_current_user_id() -> str:
-    """Get current user ID - returns demo user for now"""
-    return "12345678-1234-1234-1234-123456789012"
-
 @router.get("/{smallcase_id}/composition", response_model=APIResponse)
 async def get_smallcase_composition(
     smallcase_id: str, 
     db: AsyncSession = Depends(get_db),
-    current_user_id=Depends(get_current_user_id)
+    current_user=Depends(get_current_user)  # Use REAL auth
 ):
     """Get smallcase composition with market data for modification/rebalancing"""
     try:
@@ -47,7 +42,7 @@ async def get_smallcase_composition(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate suggestions: {str(e)}"
+            detail=f"Failed to get composition: {str(e)}"
         )
 
 @router.post("/{smallcase_id}/rebalance/apply", response_model=APIResponse)
@@ -55,13 +50,15 @@ async def apply_rebalancing_suggestions(
     smallcase_id: str,
     apply_request: ApplyRebalancingRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_id)
+    current_user=Depends(get_current_user)  # Use REAL auth - returns user object
 ):
     """Apply rebalancing suggestions to smallcase portfolio"""
     try:
-        # Optional: Verify user has access to modify this smallcase
+        user_id = str(current_user.id)  # Extract user ID from user object
+        
+        # Verify user has access to modify this smallcase
         has_access = await RebalancingDBService.verify_user_access_to_smallcase(
-            db, smallcase_id, str(current_user.id)
+            db, smallcase_id, user_id  # Pass user_id string
         )
         
         if not has_access:
@@ -75,19 +72,19 @@ async def apply_rebalancing_suggestions(
             db, smallcase_id, apply_request.suggestions
         )
         
-        # Optional: Log the rebalancing activity for audit
+        # Log the rebalancing activity for audit
         await RebalancingDBService.log_rebalancing_activity(
             db=db,
             smallcase_id=smallcase_id,
-            user_id=str(current_user.id),
-            strategy="user_applied",  # Could extract from request
-            changes_applied=result["total_changes"]
+            user_id=user_id,
+            strategy="user_applied",
+            changes_applied=result.get("total_changes", 0)
         )
         
         return APIResponse(
             success=True,
             data=result,
-            message=f"Successfully rebalanced {result['total_changes']} stocks"
+            message=f"Successfully rebalanced {result.get('total_changes', 0)} stocks"
         )
         
     except HTTPException:
@@ -121,10 +118,12 @@ async def generate_rebalancing_suggestions(
     smallcase_id: str,
     request_data: RebalancingRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_id)
+    current_user=Depends(get_current_user)  # Use REAL auth
 ):
     """Generate AI-powered rebalancing suggestions based on selected strategy"""
     try:
+        user_id = str(current_user.id)
+        
         # Get current composition
         composition = await RebalancingDBService.get_smallcase_composition(
             db, smallcase_id
@@ -152,4 +151,7 @@ async def generate_rebalancing_suggestions(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTP
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate rebalancing suggestions: {str(e)}"
+        )

@@ -175,7 +175,7 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
     
     setIsLoadingSuggestions(true);
     try {
-      const response = await apiRequest.post(`/smallcases/${investment.smallcase.id}/rebalance/suggestions`, {
+      const response = await apiRequest.post(`/api/v1/smallcases/${investment.smallcase.id}/rebalance/suggestions`, {
         strategy
       });
       setRebalancingSuggestions(response.data.data);
@@ -201,7 +201,7 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
     
     setIsApplying(true);
     try {
-      const response = await apiRequest.post(`/smallcases/${investment.smallcase.id}/rebalance/apply`, {
+      const response = await apiRequest.post(`/api/v1/smallcases/${investment.smallcase.id}/rebalance/apply`, {
         suggestions: rebalancingSuggestions.suggestions
       });
       

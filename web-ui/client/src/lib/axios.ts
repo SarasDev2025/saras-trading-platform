@@ -25,34 +25,22 @@ apiRequest.interceptors.request.use(
 );
 
 // Add a response interceptor to handle common errors
+// In your API client (axios.ts):
 apiRequest.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   (error) => {
-    if (error.response) {
-      // Handle specific status codes
-      if (error.response.status === 401) {
-        // Handle unauthorized access
-        console.error('Unauthorized access - please login again');
-      } else if (error.response.status === 403) {
-        // Handle forbidden access
-        console.error('You do not have permission to access this resource');
-      } else if (error.response.status === 404) {
-        // Handle not found
-        console.error('The requested resource was not found');
-      } else if (error.response.status >= 500) {
-        // Handle server errors
-        console.error('A server error occurred. Please try again later.');
-      }
-    } else if (error.request) {
-      // The request was made but no response was received
-      console.error('No response received from server. Please check your connection.');
-    } else {
-      // Something happened in setting up the request
-      console.error('Error setting up request:', error.message);
+    if (error.response?.status === 401) {
+      // Token invalid or expired
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      window.location.href = '/login';
+    } else if (error.response?.status === 423) {
+      // Account locked
+      alert('Account temporarily locked due to security concerns');
+    } else if (error.response?.status === 429) {
+      // Rate limited
+      alert('Too many requests. Please try again later.');
     }
-    
     return Promise.reject(error);
   }
 );

@@ -1,12 +1,13 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict, Annotated
 import uuid
 import re
 from config.database import get_db
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
+from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 
 router = APIRouter()
 
@@ -35,11 +36,8 @@ class APIResponse(BaseModel):
     message: Optional[str] = None
     error: Optional[str] = None
 
-# Helper function to get user ID (placeholder for now)
-async def get_current_user_id() -> str:
-    """Get current user ID - returns demo user for testing"""
-    # Demo user ID for launch - replace with actual authentication later
-    return "12345678-1234-1234-1234-123456789012"
+# Get current authenticated user
+# This will be injected by FastAPI's dependency injection
 
 def validate_uuid(portfolio_id: str) -> str:
     """Validate and handle portfolio ID, return demo portfolio for invalid UUIDs"""

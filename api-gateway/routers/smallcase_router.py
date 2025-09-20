@@ -8,10 +8,13 @@ Smallcase router for managing curated investment themes and paper trading
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Annotated
 from uuid import UUID
 import uuid
 from datetime import datetime
+
+# Import enhanced auth dependencies
+from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 
 from config.database import get_db
 from routers.auth_router import get_current_user  # Import real auth
@@ -35,12 +38,12 @@ def validate_uuid(uuid_string: str) -> str:
 
 @router.get("/user/investments", response_model=APIResponse)
 async def get_user_investments(
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)  # Use real auth
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+        db: AsyncSession = Depends(get_db)
 ):
     """Get user's smallcase investments"""
     try:
-        user_id = str(current_user.id)  # Use real user ID
+        user_id = str(current_user["id"])  # Access user ID from dictionary
         
         print(f"🔍 DEBUG: Fetching investments for user {user_id}")
         
@@ -105,12 +108,12 @@ async def get_user_investments(
 async def invest_in_smallcase(
     smallcase_id: str, 
     investment_data: Dict[str, Any], 
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)  # Use real auth
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
 ):
     """Invest in a smallcase (paper trading)"""
     try:
-        user_id = str(current_user.id)  # Use real user ID
+        user_id = str(current_user["id"])  # Access user ID from dictionary
         
         # Get user's default portfolio
         portfolio_result = await db.execute(text("""
@@ -339,8 +342,8 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
 @router.get("/{smallcase_id}/composition", response_model=APIResponse)
 async def get_smallcase_composition(
     smallcase_id: str, 
-    db: AsyncSession = Depends(get_db),
-    current_user_id=Depends(get_current_user)  # Ensure user is authenticated
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
 ):
     """Get smallcase composition with market data for modification/rebalancing"""
     try:

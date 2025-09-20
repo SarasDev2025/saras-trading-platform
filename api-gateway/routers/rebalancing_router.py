@@ -2,29 +2,22 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import Dict, Any, Annotated
 
 from config.database import get_db
-from routers.auth_router import get_current_user  # Import the REAL auth dependency
 from models import APIResponse
-from models.rebalancing_models import (
-    RebalancingRequest,
-    RebalancingResponse,
-    ApplyRebalancingRequest,
-    ApplyRebalancingResult,
-    RebalancingStrategy,
-    PortfolioComposition
-)
+from models.rebalancing_models import RebalancingRequest, ApplyRebalancingRequest
 from services.rebalancing_service import RebalancingService
 from services.rebalancing_db_service import RebalancingDBService
+from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 
 router = APIRouter(prefix="/smallcases", tags=["Rebalancing"])
 
 @router.get("/{smallcase_id}/composition", response_model=APIResponse)
 async def get_smallcase_composition(
     smallcase_id: str, 
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)  # Use REAL auth
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
 ):
     """Get smallcase composition with market data for modification/rebalancing"""
     try:
@@ -49,12 +42,12 @@ async def get_smallcase_composition(
 async def apply_rebalancing_suggestions(
     smallcase_id: str,
     apply_request: ApplyRebalancingRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)  # Use REAL auth - returns user object
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],  # Use REAL auth - returns user object
+    db: AsyncSession = Depends(get_db)
 ):
     """Apply rebalancing suggestions to smallcase portfolio"""
     try:
-        user_id = str(current_user.id)  # Extract user ID from user object
+        user_id = str(current_user["id"])  # Access user ID from dictionary
         
         # Verify user has access to modify this smallcase
         has_access = await RebalancingDBService.verify_user_access_to_smallcase(
@@ -117,13 +110,24 @@ async def get_available_rebalancing_strategies():
 async def generate_rebalancing_suggestions(
     smallcase_id: str,
     request_data: RebalancingRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)  # Use REAL auth
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
 ):
     """Generate AI-powered rebalancing suggestions based on selected strategy"""
     try:
-        user_id = str(current_user.id)
-        
+        user_id = str(current_user["id"])
+
+        # Verify the user owns this smallcase before sharing composition details
+        has_access = await RebalancingDBService.verify_user_access_to_smallcase(
+            db, smallcase_id, user_id
+        )
+
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to view this smallcase"
+            )
+
         # Get current composition
         composition = await RebalancingDBService.get_smallcase_composition(
             db, smallcase_id

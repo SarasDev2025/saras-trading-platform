@@ -8,8 +8,8 @@ import math
 class RebalancingStrategy:
     """Rebalancing strategy constants"""
     EQUAL_WEIGHT = "equal_weight"
-    MARKET_CAP = "market_cap_weighted"
-    MOMENTUM = "momentum_based"
+    MARKET_CAP = "market_cap"
+    MOMENTUM = "momentum"
     VOLATILITY_ADJUSTED = "volatility_adjusted"
 
 class RebalancingService:

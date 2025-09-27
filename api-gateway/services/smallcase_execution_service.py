@@ -28,6 +28,7 @@ from models import (
     UserSmallcaseInvestment,
 )
 from services.broker_connection_service import BrokerConnectionService
+from services.order_aggregation_service import OrderAggregationService
 from services.rebalancing_db_service import RebalancingDBService
 from services.trading_service import TradingService
 
@@ -402,6 +403,224 @@ class SmallcaseExecutionService:
             "orders": results,
             "rebalance": rebalance_summary or {},
         }
+
+    @staticmethod
+    async def _execute_live_orders_aggregated(
+        db: AsyncSession,
+        runs: List[SmallcaseExecutionRun],
+        all_orders: List[SmallcaseExecutionOrder],
+        stock_lookup: Dict[uuid.UUID, Dict[str, Any]],
+        rebalance_summary: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute orders using aggregation service for efficient bulk trading
+
+        Args:
+            db: Database session
+            runs: List of execution runs
+            all_orders: All orders from all users to be aggregated
+            stock_lookup: Stock information lookup
+            rebalance_summary: Optional rebalance summary
+
+        Returns:
+            Execution summary
+        """
+        logger.info(f"[Execution] Starting aggregated execution for {len(all_orders)} orders from {len(runs)} users")
+
+        # Build investments lookup by user
+        investments_by_user = {}
+        for run in runs:
+            # Get investment for this run
+            result = await db.execute(
+                select(UserSmallcaseInvestment)
+                .options(selectinload(UserSmallcaseInvestment.broker_connection))
+                .where(UserSmallcaseInvestment.id == run.investment_id)
+            )
+            investment = result.scalar_one_or_none()
+            if investment:
+                investments_by_user[run.user_id] = investment
+
+        # Use aggregation service to execute orders
+        try:
+            aggregation_results = await OrderAggregationService.aggregate_and_execute_orders(
+                db, all_orders, stock_lookup, investments_by_user
+            )
+
+            # Update run statuses based on results
+            for run in runs:
+                user_orders = [order for order in all_orders if order.execution_run_id == run.id]
+                completed_orders = sum(1 for order in user_orders
+                                     if order.status == ExecutionOrderStatus.COMPLETED)
+                submitted_orders = sum(1 for order in user_orders
+                                     if order.status == ExecutionOrderStatus.SUBMITTED)
+
+                run.completed_orders = completed_orders
+
+                if completed_orders == len(user_orders):
+                    run.status = ExecutionStatus.COMPLETED
+                elif submitted_orders > 0 or completed_orders > 0:
+                    run.status = ExecutionStatus.SUBMITTED
+                else:
+                    run.status = ExecutionStatus.FAILED
+
+                run.completed_at = datetime.now(timezone.utc)
+
+            return {
+                "mode": "aggregated_live",
+                "type": "aggregated_execution",
+                "aggregated_orders_count": aggregation_results['aggregated_orders_count'],
+                "total_user_orders": aggregation_results['total_user_orders'],
+                "execution_results": aggregation_results['execution_results'],
+                "rebalance": rebalance_summary or {},
+                "aggregation_summary": aggregation_results['aggregation_summary']
+            }
+
+        except Exception as exc:
+            logger.error(f"[Execution] Aggregated execution failed: {exc}")
+            # Mark all runs as failed
+            for run in runs:
+                run.status = ExecutionStatus.FAILED
+                run.error_message = str(exc)
+                run.completed_at = datetime.now(timezone.utc)
+            raise
+
+    @staticmethod
+    async def execute_multiple_rebalances_aggregated(
+        db: AsyncSession,
+        rebalance_requests: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Execute multiple user rebalances using order aggregation for efficiency
+
+        Args:
+            db: Database session
+            rebalance_requests: List of rebalance requests containing:
+                - user_id: User UUID
+                - smallcase_id: Smallcase UUID
+                - suggestions: List of rebalance suggestions
+                - rebalance_summary: Optional summary
+
+        Returns:
+            Aggregated execution results
+        """
+        logger.info(f"[Execution] Starting aggregated rebalance for {len(rebalance_requests)} users")
+
+        all_runs = []
+        all_orders = []
+
+        # Create runs and orders for all users
+        for request in rebalance_requests:
+            user_uuid = SmallcaseExecutionService._normalize_uuid(request['user_id'])
+            smallcase_uuid = SmallcaseExecutionService._normalize_uuid(request['smallcase_id'])
+            suggestions = request['suggestions']
+            rebalance_summary = request.get('rebalance_summary')
+
+            try:
+                investment = await SmallcaseExecutionService._load_investment(db, user_uuid, smallcase_uuid)
+                execution_mode = investment.execution_mode or ExecutionMode.PAPER
+                broker_connection = investment.broker_connection
+
+                # Only proceed with live execution if we have broker connection
+                if execution_mode != ExecutionMode.LIVE or not broker_connection:
+                    logger.info(f"[Execution] Skipping aggregation for user {user_uuid} - not live mode or no broker")
+                    continue
+
+                # Create execution run
+                run = SmallcaseExecutionRun(
+                    user_id=investment.user_id,
+                    investment_id=investment.id,
+                    broker_connection_id=broker_connection.id,
+                    execution_mode=execution_mode,
+                    status=ExecutionStatus.PENDING,
+                    total_orders=len(suggestions),
+                )
+                db.add(run)
+                await db.flush()  # Get run.id
+                all_runs.append(run)
+
+                # Create orders for this run
+                for suggestion in suggestions:
+                    asset_id = None
+                    if suggestion.get("stock_id"):
+                        try:
+                            asset_id = uuid.UUID(str(suggestion["stock_id"]))
+                        except (TypeError, ValueError):
+                            asset_id = None
+
+                    order = SmallcaseExecutionOrder(
+                        execution_run_id=run.id,
+                        asset_id=asset_id,
+                        symbol=suggestion.get("symbol"),
+                        action=suggestion.get("action"),
+                        current_weight=SmallcaseExecutionService._to_decimal(suggestion.get("current_weight")),
+                        suggested_weight=SmallcaseExecutionService._to_decimal(suggestion.get("suggested_weight")),
+                        weight_change=SmallcaseExecutionService._to_decimal(suggestion.get("weight_change")),
+                        status=ExecutionOrderStatus.PENDING,
+                        details=suggestion,
+                    )
+                    db.add(order)
+                    all_orders.append(order)
+
+                # Update investment timestamp
+                investment.last_rebalanced_at = datetime.now(timezone.utc)
+
+            except Exception as exc:
+                logger.error(f"[Execution] Failed to prepare rebalance for user {user_uuid}: {exc}")
+                continue
+
+        if not all_runs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid rebalance requests for aggregated execution"
+            )
+
+        # Get stock composition for all smallcases involved
+        smallcase_ids = list(set(run.investment.smallcase_id for run in all_runs
+                                if hasattr(run, 'investment') or run.investment_id))
+
+        # For simplicity, get composition for first smallcase - in production,
+        # you might need to handle multiple smallcases differently
+        composition = await RebalancingDBService.get_smallcase_composition(
+            db, smallcase_ids[0] if smallcase_ids else None
+        )
+
+        stock_lookup = {
+            uuid.UUID(str(stock["stock_id"])): stock
+            for stock in composition.get("stocks", [])
+            if stock.get("stock_id")
+        }
+
+        # Execute aggregated orders
+        try:
+            summary = await SmallcaseExecutionService._execute_live_orders_aggregated(
+                db=db,
+                runs=all_runs,
+                all_orders=all_orders,
+                stock_lookup=stock_lookup,
+                rebalance_summary=rebalance_requests[0].get('rebalance_summary') if rebalance_requests else None
+            )
+
+            await db.commit()
+
+            # Refresh all runs to get updated data
+            for run in all_runs:
+                await db.refresh(run)
+                await db.refresh(run, attribute_names=["orders"])
+
+            logger.info(f"[Execution] Aggregated execution completed for {len(all_runs)} users")
+
+            return {
+                "aggregated_execution": True,
+                "total_users": len(all_runs),
+                "total_orders": len(all_orders),
+                "execution_summary": summary,
+                "runs": [SmallcaseExecutionService._serialize_run(run) for run in all_runs]
+            }
+
+        except Exception as exc:
+            logger.error(f"[Execution] Aggregated execution failed: {exc}")
+            await db.rollback()
+            raise
 
     @staticmethod
     async def _execute_live_orders(

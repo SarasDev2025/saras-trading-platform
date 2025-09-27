@@ -11,7 +11,9 @@ from sqlalchemy import text
 from typing import List, Dict, Any, Annotated
 from uuid import UUID
 import uuid
+import logging
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 # Import enhanced auth dependencies
 from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
@@ -21,6 +23,12 @@ from routers.auth_router import get_current_user  # Import real auth
 from models import APIResponse
 
 router = APIRouter(tags=["smallcases"])
+logger = logging.getLogger(__name__)
+
+# Constants for financial calculations
+DEFAULT_NAV = Decimal("100.00")
+DEFAULT_STOCK_PRICE = Decimal("100.00")
+PERCENTAGE_DIVISOR = Decimal("100")
 
 # Remove the dummy function and import real auth
 # def get_current_user_id() -> str:
@@ -106,14 +114,19 @@ async def get_user_investments(
 
 @router.post("/{smallcase_id}/invest", response_model=APIResponse)
 async def invest_in_smallcase(
-    smallcase_id: str, 
-    investment_data: Dict[str, Any], 
+    smallcase_id: str,
+    investment_data: Dict[str, Any],
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
     db: AsyncSession = Depends(get_db)
 ):
     """Invest in a smallcase (paper trading)"""
+    # Print this immediately at function start
+    print(f"🚀🚀🚀 INVEST ENDPOINT CALLED for smallcase {smallcase_id} with data {investment_data}")
+    logger.info(f"🚀🚀🚀 INVEST ENDPOINT CALLED for smallcase {smallcase_id} with data {investment_data}")
     try:
         user_id = str(current_user["id"])  # Access user ID from dictionary
+        logger.info(f"👤👤👤 User ID: {user_id}")
+        print(f"👤👤👤 User ID: {user_id}")
         
         # Get user's default portfolio
         portfolio_result = await db.execute(text("""
@@ -128,8 +141,13 @@ async def invest_in_smallcase(
             raise HTTPException(status_code=400, detail="No portfolio found for user")
         
         portfolio_id = str(portfolio_row.id)
-        investment_amount = float(investment_data.get("amount", 0))
-        
+
+        # Use Decimal for all financial calculations
+        try:
+            investment_amount = Decimal(str(investment_data.get("amount", 0)))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid investment amount")
+
         if investment_amount <= 0:
             raise HTTPException(status_code=400, detail="Investment amount must be positive")
         
@@ -143,10 +161,11 @@ async def invest_in_smallcase(
         if not smallcase_row:
             raise HTTPException(status_code=404, detail="Smallcase not found")
         
-        if investment_amount < float(smallcase_row.minimum_investment):
+        minimum_investment = Decimal(str(smallcase_row.minimum_investment))
+        if investment_amount < minimum_investment:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Minimum investment is ${smallcase_row.minimum_investment}"
+                status_code=400,
+                detail=f"Minimum investment is ${minimum_investment}"
             )
         
         # Calculate NAV (simplified - using average of constituent prices)
@@ -158,39 +177,119 @@ async def invest_in_smallcase(
         """), {"smallcase_id": smallcase_id})
         
         nav_row = nav_result.fetchone()
-        nav = float(nav_row.nav) if nav_row.nav else 100.0  # Default NAV
-        
+        nav = Decimal(str(nav_row.nav)) if nav_row.nav else DEFAULT_NAV
+
         units_purchased = investment_amount / nav
         
         # Create investment record
         investment_id = str(uuid.uuid4())
         await db.execute(text("""
-            INSERT INTO user_smallcase_investments 
-            (id, user_id, portfolio_id, smallcase_id, investment_amount, units_purchased, 
+            INSERT INTO user_smallcase_investments
+            (id, user_id, portfolio_id, smallcase_id, investment_amount, units_purchased,
              purchase_price, current_value, unrealized_pnl, status)
-            VALUES (:id, :user_id, :portfolio_id, :smallcase_id, :investment_amount, 
+            VALUES (:id, :user_id, :portfolio_id, :smallcase_id, :investment_amount,
                     :units_purchased, :purchase_price, :current_value, :unrealized_pnl, 'active')
         """), {
             "id": investment_id,
             "user_id": user_id,
             "portfolio_id": portfolio_id,
             "smallcase_id": smallcase_id,
-            "investment_amount": investment_amount,
-            "units_purchased": units_purchased,
-            "purchase_price": nav,
-            "current_value": investment_amount,  # Initial value = investment amount
+            "investment_amount": float(investment_amount),
+            "units_purchased": float(units_purchased),
+            "purchase_price": float(nav),
+            "current_value": float(investment_amount),  # Initial value = investment amount
             "unrealized_pnl": 0.0  # Initial P&L = 0
         })
-        
+
+        # Create portfolio holdings based on smallcase constituents
+        print(f"🔄 Creating portfolio holdings for investment {investment_id}")
+
+        # Get smallcase constituents
+        constituents_result = await db.execute(text("""
+            SELECT sc.asset_id, sc.weight_percentage, a.symbol, a.current_price
+            FROM smallcase_constituents sc
+            JOIN assets a ON sc.asset_id = a.id
+            WHERE sc.smallcase_id = :smallcase_id AND sc.is_active = true
+        """), {"smallcase_id": smallcase_id})
+
+        constituents = constituents_result.fetchall()
+        print(f"📊 Found {len(constituents)} constituents for smallcase")
+
+        # Create holdings for each constituent
+        holdings_created = 0
+        for constituent in constituents:
+            try:
+                # Convert weight percentage to Decimal
+                weight_value = constituent.weight_percentage or 0
+                weight_decimal = Decimal(str(weight_value))
+
+                # Calculate constituent value using proper Decimal arithmetic
+                constituent_value_decimal = (investment_amount * weight_decimal) / PERCENTAGE_DIVISOR
+
+                # Handle stock price with proper default
+                price_value = constituent.current_price if constituent.current_price is not None else DEFAULT_STOCK_PRICE
+                price_decimal = Decimal(str(price_value))
+
+                # Ensure price is positive
+                if price_decimal <= 0:
+                    price_decimal = DEFAULT_STOCK_PRICE
+
+                # Calculate quantity
+                quantity_decimal = constituent_value_decimal / price_decimal
+
+                # Convert to float for database insert (with proper rounding)
+                constituent_value = float(constituent_value_decimal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                current_price = float(price_decimal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                quantity = float(quantity_decimal.quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP))
+
+            except (ValueError, TypeError, AttributeError) as calc_error:
+                print(f"  ❌ Calculation error for {constituent.symbol}: {calc_error}")
+                continue
+
+            # Create portfolio holding (simple insert, no conflict handling for now)
+            holding_id = str(uuid.uuid4())
+            try:
+                await db.execute(text("""
+                    INSERT INTO portfolio_holdings
+                    (id, portfolio_id, asset_id, quantity, average_cost, total_cost,
+                     current_value, unrealized_pnl, realized_pnl, created_at, last_updated)
+                    VALUES (:id, :portfolio_id, :asset_id, :quantity, :average_cost, :total_cost,
+                            :current_value, :unrealized_pnl, :realized_pnl, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (portfolio_id, asset_id) DO UPDATE SET
+                        quantity = portfolio_holdings.quantity + EXCLUDED.quantity,
+                        total_cost = portfolio_holdings.total_cost + EXCLUDED.total_cost,
+                        current_value = portfolio_holdings.current_value + EXCLUDED.current_value,
+                        last_updated = CURRENT_TIMESTAMP
+                """), {
+                    "id": holding_id,
+                    "portfolio_id": portfolio_id,
+                    "asset_id": str(constituent.asset_id),
+                    "quantity": quantity,
+                    "average_cost": current_price,
+                    "total_cost": constituent_value,
+                    "current_value": constituent_value,
+                    "unrealized_pnl": 0.0,
+                    "realized_pnl": 0.0
+                })
+                holdings_created += 1
+                print(f"  📈 Created holding: {constituent.symbol} - {quantity:.4f} shares @ ${current_price:.2f} = ${constituent_value:.2f}")
+            except Exception as holding_error:
+                print(f"  ❌ Failed to create holding for {constituent.symbol}: {holding_error}")
+                logger.error(f"Failed to create holding for {constituent.symbol}: {holding_error}")
+                # Continue with other holdings
+
+        print(f"✅ Created {holdings_created} portfolio holdings")
+
         await db.commit()
         
         return APIResponse(
             success=True,
             data={
                 "investmentId": investment_id,
-                "amount": investment_amount,
-                "units": units_purchased,
-                "nav": nav
+                "amount": float(investment_amount),
+                "units": float(units_purchased),
+                "nav": float(nav),
+                "holdingsCreated": holdings_created
             },
             message=f"Successfully invested ${investment_amount} in {smallcase_row.name}"
         )
@@ -200,6 +299,7 @@ async def invest_in_smallcase(
     except Exception as e:
         await db.rollback()
         print(f"❌ ERROR creating investment: {e}")
+        logger.error(f"Investment creation failed for user {user_id}, smallcase {smallcase_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create investment: {str(e)}")
 
 # Keep other endpoints the same but add real auth where needed
@@ -570,22 +670,38 @@ async def preview_smallcase_closure(
 @router.post("/investments/{investment_id}/close", response_model=APIResponse)
 async def close_smallcase_position(
     investment_id: str,
+    closure_data: Dict[str, Any],
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
-    db: AsyncSession = Depends(get_db),
-    closure_percentage: float = 100.0,
-    closure_reason: str = "manual_close"
+    db: AsyncSession = Depends(get_db)
 ):
-    """Close a smallcase position (full or partial)"""
+    """
+    Close a smallcase position (full or partial)
+
+    Request body format:
+    {
+        "closure_reason": "manual_close|rebalance|stop_loss|target_reached|risk_management",
+        "closure_percentage": 100.0  // optional, defaults to 100.0
+    }
+    """
     try:
         from services.smallcase_closure_service import SmallcaseClosureService
 
+        # Extract parameters from request body
+        closure_reason = closure_data.get("closure_reason", "manual_close")
+        closure_percentage = float(closure_data.get("closure_percentage", 100.0))
+
+        # Validate closure percentage
         if closure_percentage <= 0 or closure_percentage > 100:
             raise HTTPException(
                 status_code=400,
                 detail="Closure percentage must be between 0 and 100"
             )
 
-        valid_reasons = ["manual_close", "rebalance", "stop_loss", "target_reached", "risk_management"]
+        # Validate closure reason
+        valid_reasons = [
+            "manual_close", "rebalance", "stop_loss", "target_reached",
+            "risk_management", "test_closure_api", "user_exit"
+        ]
         if closure_reason not in valid_reasons:
             raise HTTPException(
                 status_code=400,
@@ -593,6 +709,9 @@ async def close_smallcase_position(
             )
 
         user_id = str(current_user["id"])
+
+        logger.info(f"[Closure] User {user_id} closing investment {investment_id} - {closure_percentage}% - {closure_reason}")
+
         result = await SmallcaseClosureService.close_position(
             db, user_id, investment_id, closure_reason, closure_percentage
         )
@@ -605,6 +724,7 @@ async def close_smallcase_position(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[Closure] Failed to close position {investment_id}: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to close position: {str(e)}"
@@ -731,4 +851,142 @@ async def get_user_closed_investments(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch closed investments: {str(e)}"
+        )
+
+
+@router.post("/bulk/rebalance", response_model=APIResponse)
+async def execute_bulk_rebalance(
+    rebalance_requests: List[Dict[str, Any]],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Execute rebalancing for multiple users using order aggregation
+
+    This endpoint allows efficient bulk execution of rebalances by aggregating
+    individual user orders into consolidated broker orders.
+
+    Request format:
+    [
+        {
+            "user_id": "uuid",
+            "smallcase_id": "uuid",
+            "suggestions": [
+                {
+                    "stock_id": "uuid",
+                    "symbol": "AAPL",
+                    "action": "buy/sell",
+                    "current_weight": 10.0,
+                    "suggested_weight": 15.0,
+                    "weight_change": 5.0
+                }
+            ],
+            "rebalance_summary": {...}
+        }
+    ]
+    """
+    try:
+        from services.smallcase_execution_service import SmallcaseExecutionService
+
+        if not rebalance_requests:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one rebalance request is required"
+            )
+
+        # Validate request structure
+        for i, request in enumerate(rebalance_requests):
+            required_fields = ['user_id', 'smallcase_id', 'suggestions']
+            for field in required_fields:
+                if field not in request:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Missing required field '{field}' in request {i}"
+                    )
+
+        logger.info(f"[BulkRebalance] Processing {len(rebalance_requests)} rebalance requests")
+
+        # Execute aggregated rebalancing
+        result = await SmallcaseExecutionService.execute_multiple_rebalances_aggregated(
+            db, rebalance_requests
+        )
+
+        logger.info(f"[BulkRebalance] Completed aggregated execution")
+
+        return APIResponse(
+            success=True,
+            data=result,
+            message=f"Successfully executed aggregated rebalance for {result.get('total_users', 0)} users"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[BulkRebalance] Failed to execute bulk rebalance: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute bulk rebalance: {str(e)}"
+        )
+
+
+@router.post("/bulk/close", response_model=APIResponse)
+async def execute_bulk_closure(
+    closure_requests: List[Dict[str, Any]],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Execute closure for multiple investments using order aggregation
+
+    This endpoint allows efficient bulk execution of closures by aggregating
+    individual sell orders into consolidated broker orders.
+
+    Request format:
+    [
+        {
+            "user_id": "uuid",
+            "investment_id": "uuid",
+            "closure_reason": "user_exit"
+        }
+    ]
+    """
+    try:
+        from services.smallcase_closure_service import SmallcaseClosureService
+
+        if not closure_requests:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one closure request is required"
+            )
+
+        # Validate request structure
+        for i, request in enumerate(closure_requests):
+            required_fields = ['user_id', 'investment_id']
+            for field in required_fields:
+                if field not in request:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Missing required field '{field}' in request {i}"
+                    )
+
+        logger.info(f"[BulkClosure] Processing {len(closure_requests)} closure requests")
+
+        # Execute aggregated closures
+        result = await SmallcaseClosureService.execute_bulk_closures_aggregated(
+            db, closure_requests
+        )
+
+        logger.info(f"[BulkClosure] Completed aggregated closure")
+
+        return APIResponse(
+            success=True,
+            data=result,
+            message=f"Successfully executed aggregated closure for {result.get('total_investments', 0)} investments"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[BulkClosure] Failed to execute bulk closure: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute bulk closure: {str(e)}"
         )

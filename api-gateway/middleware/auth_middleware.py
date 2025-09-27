@@ -206,18 +206,31 @@ class AuthAuditMiddleware(BaseHTTPMiddleware):
     async def _store_audit_log(self, db: AsyncSession, log_data: Dict[str, Any]):
         """Store audit log in database"""
         try:
+            timestamp = log_data.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    try:
+                        timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f%z")
+                    except ValueError:
+                        try:
+                            timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S%z")
+                        except ValueError:
+                            timestamp = None
+
             await db.execute(text("""
                 INSERT INTO audit_logs (
                     id, event_type, request_id, timestamp, client_ip, 
                     user_agent, path, method, user_id, created_at
                 ) VALUES (
-                    gen_random_uuid(), :event, :request_id, :timestamp::timestamp, 
+                    gen_random_uuid(), :event, :request_id, :timestamp, 
                     :client_ip, :user_agent, :path, :method, :user_id, NOW()
                 )
             """), {
                 "event": log_data["event"],
                 "request_id": log_data["request_id"],
-                "timestamp": log_data["timestamp"],
+                "timestamp": timestamp,
                 "client_ip": log_data["client_ip"],
                 "user_agent": log_data["user_agent"],
                 "path": log_data.get("path"),
@@ -232,17 +245,30 @@ class AuthAuditMiddleware(BaseHTTPMiddleware):
     async def _store_security_log(self, db: AsyncSession, log_data: Dict[str, Any]):
         """Store security events in database"""
         try:
+            timestamp = log_data.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    try:
+                        timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f%z")
+                    except ValueError:
+                        try:
+                            timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S%z")
+                        except ValueError:
+                            timestamp = None
+
             await db.execute(text("""
                 INSERT INTO security_logs (
                     id, event_type, timestamp, client_ip, user_agent, 
                     token_present, details, created_at
                 ) VALUES (
-                    gen_random_uuid(), :event_type, :timestamp::timestamp, 
+                    gen_random_uuid(), :event_type, :timestamp, 
                     :client_ip, :user_agent, :token_present, :details, NOW()
                 )
             """), {
                 "event_type": log_data["event_type"],
-                "timestamp": log_data["timestamp"],
+                "timestamp": timestamp,
                 "client_ip": log_data["client_ip"],
                 "user_agent": log_data["user_agent"],
                 "token_present": log_data["token_present"],

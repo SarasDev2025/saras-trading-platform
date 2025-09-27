@@ -2,7 +2,7 @@
 User service for managing user operations
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 import bcrypt
@@ -95,7 +95,7 @@ class UserService:
             await session.execute(
                 update(User)
                 .where(User.id == user_id)
-                .values(last_login=datetime.utcnow())
+                .values(last_login=datetime.now(timezone.utc))
             )
             await session.commit()
 
@@ -118,7 +118,7 @@ class UserService:
             await session.execute(
                 update(User)
                 .where(User.id == user_id)
-                .values(**filtered_updates, updated_at=datetime.utcnow())
+                .values(**filtered_updates, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             
@@ -135,7 +135,7 @@ class UserService:
             await session.execute(
                 update(User)
                 .where(User.id == user_id)
-                .values(email_verified=verified, updated_at=datetime.utcnow())
+                .values(email_verified=verified, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             
@@ -151,7 +151,7 @@ class UserService:
             await session.execute(
                 update(User)
                 .where(User.id == user_id)
-                .values(kyc_status=status, updated_at=datetime.utcnow())
+                .values(kyc_status=status, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             
@@ -197,7 +197,7 @@ class UserService:
             await session.execute(
                 update(User)
                 .where(User.id == user_id)
-                .values(password_hash=new_password_hash, updated_at=datetime.utcnow())
+                .values(password_hash=new_password_hash, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             

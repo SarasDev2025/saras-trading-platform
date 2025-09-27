@@ -204,9 +204,14 @@ async def invest_in_smallcase(
 
 # Keep other endpoints the same but add real auth where needed
 @router.get("", response_model=APIResponse)
-async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
-    """Get all available smallcases (not just user-created ones)"""
+async def get_user_smallcases(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all available smallcases with user investment status"""
     try:
+        user_id = str(current_user["id"]) if current_user else None
+
         result = await db.execute(text("""
             SELECT
                 s.id,
@@ -219,16 +224,23 @@ async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
                 s.expected_return_max,
                 s.minimum_investment,
                 s.is_active,
-                COUNT(sc.id) as constituent_count,
-                COALESCE(AVG(a.current_price * sc.weight_percentage / 100), 0) as estimated_nav
+                COUNT(DISTINCT sc.id) as constituent_count,
+                COALESCE(AVG(a.current_price * sc.weight_percentage / 100), 0) as estimated_nav,
+                CASE WHEN usi.id IS NOT NULL THEN true ELSE false END as is_invested,
+                usi.investment_amount,
+                usi.current_value,
+                usi.unrealized_pnl
             FROM smallcases s
             LEFT JOIN smallcase_constituents sc ON s.id = sc.smallcase_id AND sc.is_active = true
             LEFT JOIN assets a ON sc.asset_id = a.id
+            LEFT JOIN user_smallcase_investments usi ON s.id = usi.smallcase_id
+                AND usi.user_id = :user_id AND usi.status = 'active'
             WHERE s.is_active = true
             GROUP BY s.id, s.name, s.description, s.category, s.theme, s.risk_level,
-                     s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active
+                     s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active,
+                     usi.id, usi.investment_amount, usi.current_value, usi.unrealized_pnl
             ORDER BY s.created_at DESC
-        """))
+        """), {"user_id": user_id})
 
         smallcases = []
         rows = result.fetchall()
@@ -246,7 +258,11 @@ async def get_user_smallcases(db: AsyncSession = Depends(get_db)):
                 "minimumInvestment": float(row.minimum_investment),
                 "constituentCount": row.constituent_count,
                 "estimatedNAV": float(row.estimated_nav),
-                "isActive": row.is_active
+                "isActive": row.is_active,
+                "isInvested": row.is_invested,
+                "investmentAmount": float(row.investment_amount) if row.investment_amount else None,
+                "currentValue": float(row.current_value) if row.current_value else None,
+                "unrealizedPnl": float(row.unrealized_pnl) if row.unrealized_pnl else None
             })
 
         return APIResponse(success=True, data=smallcases)

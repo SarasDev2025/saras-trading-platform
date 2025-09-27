@@ -2,7 +2,7 @@
 Portfolio service for managing portfolio operations
 """
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 
@@ -148,7 +148,7 @@ class PortfolioService:
             await session.execute(
                 update(Portfolio)
                 .where(Portfolio.id == portfolio_id)
-                .values(**filtered_updates, updated_at=datetime.utcnow())
+                .values(**filtered_updates, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             
@@ -170,7 +170,7 @@ class PortfolioService:
                 .values(
                     cash_balance=Portfolio.cash_balance + amount,
                     total_value=Portfolio.total_value + amount,
-                    updated_at=datetime.utcnow()
+                    updated_at=datetime.now(timezone.utc)
                 )
             )
             await session.commit()
@@ -206,7 +206,7 @@ class PortfolioService:
                 .values(
                     cash_balance=Portfolio.cash_balance - amount,
                     total_value=Portfolio.total_value - amount,
-                    updated_at=datetime.utcnow()
+                    updated_at=datetime.now(timezone.utc)
                 )
             )
             await session.commit()
@@ -347,7 +347,7 @@ class PortfolioService:
             await session.execute(
                 update(Portfolio)
                 .where(and_(Portfolio.id == portfolio_id, Portfolio.user_id == user_id))
-                .values(is_default=True, updated_at=datetime.utcnow())
+                .values(is_default=True, updated_at=datetime.now(timezone.utc))
             )
             
             await session.commit()

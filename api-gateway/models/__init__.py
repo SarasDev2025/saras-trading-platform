@@ -3,7 +3,7 @@ SQLAlchemy models for the trading platform
 """
 import uuid
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from pydantic import BaseModel
@@ -60,6 +60,26 @@ class OrderType(str, Enum):
     STOP_LIMIT = "stop_limit"
 
 
+class ExecutionMode(str, Enum):
+    PAPER = "paper"
+    LIVE = "live"
+
+
+class ExecutionStatus(str, Enum):
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ExecutionOrderStatus(str, Enum):
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SIMULATED = "simulated"
+
+
 class IntervalType(str, Enum):
     ONE_MINUTE = "1m"
     FIVE_MINUTES = "5m"
@@ -96,6 +116,8 @@ class User(Base):
     user_sessions: Mapped[List["UserSession"]] = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     created_smallcases: Mapped[List["Smallcase"]] = relationship("Smallcase", back_populates="creator")
     smallcase_investments: Mapped[List["UserSmallcaseInvestment"]] = relationship("UserSmallcaseInvestment", back_populates="user", cascade="all, delete-orphan")
+    broker_connections: Mapped[List["UserBrokerConnection"]] = relationship("UserBrokerConnection", back_populates="user", cascade="all, delete-orphan")
+    execution_runs: Mapped[List["SmallcaseExecutionRun"]] = relationship("SmallcaseExecutionRun", back_populates="user", cascade="all, delete-orphan")
 
     # Constraints
     __table_args__ = (
@@ -129,7 +151,7 @@ class Portfolio(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="portfolios", cascade="all, delete-orphan")
+    user: Mapped["User"] = relationship("User", back_populates="portfolios")
     holdings: Mapped[List["PortfolioHolding"]] = relationship("PortfolioHolding", back_populates="portfolio", cascade="all, delete-orphan")
     trading_transactions: Mapped[List["TradingTransaction"]] = relationship("TradingTransaction", back_populates="portfolio", cascade="all, delete-orphan")
 
@@ -140,6 +162,35 @@ class Portfolio(Base):
 
     def __repr__(self) -> str:
         return f"<Portfolio(id={self.id}, name='{self.name}', total_value={self.total_value})>"
+
+
+class UserBrokerConnection(Base):
+    __tablename__ = "user_broker_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    alias: Mapped[str] = mapped_column(String(50), nullable=False)
+    api_key: Mapped[Optional[str]] = mapped_column(Text)
+    api_secret: Mapped[Optional[str]] = mapped_column(Text)
+    credentials: Mapped[Optional[dict]] = mapped_column(JSONB)
+    paper_trading: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    connection_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user: Mapped["User"] = relationship("User", back_populates="broker_connections")
+    investments: Mapped[List["UserSmallcaseInvestment"]] = relationship("UserSmallcaseInvestment", back_populates="broker_connection")
+    execution_runs: Mapped[List["SmallcaseExecutionRun"]] = relationship("SmallcaseExecutionRun", back_populates="broker_connection")
+    trading_transactions: Mapped[List["TradingTransaction"]] = relationship("TradingTransaction", back_populates="broker_connection")
+
+    __table_args__ = (
+        Index("ux_user_broker_connections_user_id_alias", "user_id", "alias", unique=True),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserBrokerConnection(user_id={self.user_id}, broker_type='{self.broker_type}', alias='{self.alias}')>"
 
 
 class Asset(Base):
@@ -179,6 +230,8 @@ class TradingTransaction(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     portfolio_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False, index=True)
+    broker_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_broker_connections.id", ondelete="SET NULL"), index=True)
+    execution_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcase_execution_runs.id", ondelete="SET NULL"), index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(String(10), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     price_per_unit: Mapped[Decimal] = mapped_column(Numeric(15, 8), nullable=False)
@@ -191,6 +244,7 @@ class TradingTransaction(Base):
     order_type: Mapped[OrderType] = mapped_column(String(20), default=OrderType.MARKET)
     notes: Mapped[Optional[str]] = mapped_column(Text)
     external_transaction_id: Mapped[Optional[str]] = mapped_column(String(255))
+    broker_order_id: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())
 
@@ -198,6 +252,8 @@ class TradingTransaction(Base):
     user: Mapped["User"] = relationship("User", back_populates="trading_transactions")
     portfolio: Mapped["Portfolio"] = relationship("Portfolio", back_populates="trading_transactions")
     asset: Mapped["Asset"] = relationship("Asset", back_populates="trading_transactions")
+    broker_connection: Mapped[Optional["UserBrokerConnection"]] = relationship("UserBrokerConnection", back_populates="trading_transactions")
+    execution_run: Mapped[Optional["SmallcaseExecutionRun"]] = relationship("SmallcaseExecutionRun", back_populates="trading_transactions")
 
     # Constraints
     __table_args__ = (
@@ -302,8 +358,8 @@ class Smallcase(Base):
     minimum_investment: Mapped[Decimal] = mapped_column(DECIMAL(15, 2), default=Decimal("1000.00"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[Optional[UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     creator: Mapped[Optional["User"]] = relationship("User", back_populates="created_smallcases")
@@ -318,12 +374,12 @@ class SmallcaseConstituent(Base):
     __tablename__ = "smallcase_constituents"
     
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    smallcase_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcases.id"), nullable=False)
+    smallcase_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcases.id", ondelete="CASCADE"), nullable=False)
     asset_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
     weight_percentage: Mapped[Decimal] = mapped_column(DECIMAL(5, 2), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     smallcase: Mapped["Smallcase"] = relationship("Smallcase", back_populates="constituents")
@@ -337,8 +393,8 @@ class UserSmallcaseInvestment(Base):
     __tablename__ = "user_smallcase_investments"
     
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    portfolio_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("portfolios.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    portfolio_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     smallcase_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcases.id"), nullable=False)
     investment_amount: Mapped[Decimal] = mapped_column(DECIMAL(15, 2), nullable=False)
     units_purchased: Mapped[Decimal] = mapped_column(DECIMAL(15, 8), nullable=False)
@@ -346,16 +402,83 @@ class UserSmallcaseInvestment(Base):
     current_value: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(15, 2))
     unrealized_pnl: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(15, 2))
     status: Mapped[str] = mapped_column(String(20), default="active")
-    invested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    execution_mode: Mapped[ExecutionMode] = mapped_column(String(10), default=ExecutionMode.PAPER)
+    broker_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_broker_connections.id", ondelete="SET NULL"))
+    auto_rebalance: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_rebalanced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    invested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="smallcase_investments")
     portfolio: Mapped["Portfolio"] = relationship("Portfolio")
     smallcase: Mapped["Smallcase"] = relationship("Smallcase", back_populates="investments")
+    broker_connection: Mapped[Optional["UserBrokerConnection"]] = relationship("UserBrokerConnection", back_populates="investments")
+    execution_runs: Mapped[List["SmallcaseExecutionRun"]] = relationship("SmallcaseExecutionRun", back_populates="investment", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
-        return f"<UserSmallcaseInvestment(id={self.id}, user_id={self.user_id}, smallcase_id={self.smallcase_id}, amount={self.investment_amount})>"
+        return (
+            f"<UserSmallcaseInvestment(id={self.id}, user_id={self.user_id}, smallcase_id={self.smallcase_id}, "
+            f"amount={self.investment_amount}, mode={self.execution_mode})>"
+        )
+
+
+class SmallcaseExecutionRun(Base):
+    __tablename__ = "smallcase_execution_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    investment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("user_smallcase_investments.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_broker_connections.id", ondelete="SET NULL"))
+    execution_mode: Mapped[ExecutionMode] = mapped_column(String(10), default=ExecutionMode.PAPER)
+    status: Mapped[ExecutionStatus] = mapped_column(String(20), default=ExecutionStatus.PENDING)
+    total_orders: Mapped[int] = mapped_column(Integer, default=0)
+    completed_orders: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[Optional[dict]] = mapped_column(JSONB)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user: Mapped["User"] = relationship("User", back_populates="execution_runs")
+    investment: Mapped["UserSmallcaseInvestment"] = relationship("UserSmallcaseInvestment", back_populates="execution_runs")
+    broker_connection: Mapped[Optional["UserBrokerConnection"]] = relationship("UserBrokerConnection", back_populates="execution_runs")
+    orders: Mapped[List["SmallcaseExecutionOrder"]] = relationship("SmallcaseExecutionOrder", back_populates="execution_run", cascade="all, delete-orphan")
+    trading_transactions: Mapped[List["TradingTransaction"]] = relationship("TradingTransaction", back_populates="execution_run")
+
+    def __repr__(self) -> str:
+        return (
+            f"<SmallcaseExecutionRun(id={self.id}, investment_id={self.investment_id}, "
+            f"status={self.status}, mode={self.execution_mode})>"
+        )
+
+
+class SmallcaseExecutionOrder(Base):
+    __tablename__ = "smallcase_execution_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    execution_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcase_execution_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"))
+    symbol: Mapped[Optional[str]] = mapped_column(String(50))
+    action: Mapped[Optional[str]] = mapped_column(String(20))
+    current_weight: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(7, 3))
+    suggested_weight: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(7, 3))
+    weight_change: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(7, 3))
+    status: Mapped[ExecutionOrderStatus] = mapped_column(String(20), default=ExecutionOrderStatus.PENDING)
+    broker_order_id: Mapped[Optional[str]] = mapped_column(String(255))
+    details: Mapped[Optional[dict]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    execution_run: Mapped["SmallcaseExecutionRun"] = relationship("SmallcaseExecutionRun", back_populates="orders")
+    asset: Mapped[Optional["Asset"]] = relationship("Asset")
+
+    def __repr__(self) -> str:
+        return (
+            f"<SmallcaseExecutionOrder(id={self.id}, run_id={self.execution_run_id}, "
+            f"symbol={self.symbol}, status={self.status})>"
+        )
 
 
 # API Response models

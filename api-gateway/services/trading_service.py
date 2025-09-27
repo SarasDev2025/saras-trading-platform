@@ -2,7 +2,7 @@
 Trading service for managing trading transactions
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 
@@ -71,7 +71,7 @@ class TradingService:
         """Execute a trading transaction - update holdings and portfolio"""
         # Update transaction status
         transaction.status = TransactionStatus.EXECUTED
-        transaction.settlement_date = datetime.utcnow()
+        transaction.settlement_date = datetime.now(timezone.utc)
         
         # Get existing holding
         holding_result = await session.execute(
@@ -126,7 +126,7 @@ class TradingService:
             if new_quantity == 0:
                 holding.average_cost = Decimal('0')
         
-        holding.last_updated = datetime.utcnow()
+        holding.last_updated = datetime.now(timezone.utc)
 
     @staticmethod
     async def _create_new_holding(session: AsyncSession, transaction: TradingTransaction):
@@ -153,7 +153,7 @@ class TradingService:
             .where(Portfolio.id == transaction.portfolio_id)
             .values(
                 cash_balance=Portfolio.cash_balance + cash_change,
-                updated_at=datetime.utcnow()
+                updated_at=datetime.now(timezone.utc)
             )
         )
 
@@ -267,7 +267,7 @@ class TradingService:
             
             if transaction:
                 transaction.status = TransactionStatus.CANCELLED
-                transaction.updated_at = datetime.utcnow()
+                transaction.updated_at = datetime.now(timezone.utc)
                 await session.commit()
                 
             return transaction

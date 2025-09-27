@@ -9,6 +9,7 @@ from models import APIResponse
 from models.rebalancing_models import RebalancingRequest, ApplyRebalancingRequest
 from services.rebalancing_service import RebalancingService
 from services.rebalancing_db_service import RebalancingDBService
+from services.smallcase_execution_service import SmallcaseExecutionService
 from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 
 router = APIRouter(prefix="/smallcases", tags=["Rebalancing"])
@@ -64,7 +65,7 @@ async def apply_rebalancing_suggestions(
         result = await RebalancingDBService.apply_rebalancing_to_database(
             db, smallcase_id, apply_request.suggestions
         )
-        
+
         # Log the rebalancing activity for audit
         await RebalancingDBService.log_rebalancing_activity(
             db=db,
@@ -73,10 +74,21 @@ async def apply_rebalancing_suggestions(
             strategy="user_applied",
             changes_applied=result.get("total_changes", 0)
         )
-        
+
+        execution_run = await SmallcaseExecutionService.execute_rebalance(
+            db=db,
+            user_id=user_id,
+            smallcase_id=smallcase_id,
+            suggestions=apply_request.suggestions,
+            rebalance_summary=result
+        )
+
         return APIResponse(
             success=True,
-            data=result,
+            data={
+                "rebalance_result": result,
+                "execution_run": execution_run
+            },
             message=f"Successfully rebalanced {result.get('total_changes', 0)} stocks"
         )
         

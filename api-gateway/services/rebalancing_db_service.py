@@ -2,9 +2,15 @@
 
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from fastapi import HTTPException, status
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class RebalancingDBService:
     """Database operations for rebalancing functionality"""
@@ -38,7 +44,7 @@ class RebalancingDBService:
             return result.fetchone() is not None
             
         except Exception as e:
-            print(f"❌ ERROR in verify_user_access_to_smallcase: {e}")
+            logger.exception("[RebalanceDB] verify_user_access_to_smallcase failed smallcase=%s user=%s", smallcase_id, user_id)
             return False
     
     @staticmethod
@@ -49,8 +55,7 @@ class RebalancingDBService:
     ) -> Dict[str, Any]:
         """Apply rebalancing suggestions to database"""
         try:
-            print(f"🔍 DEBUG: Starting rebalancing for smallcase {smallcase_id}")
-            print(f"🔍 DEBUG: Received {len(suggestions)} suggestions")
+            logger.info("[RebalanceDB] Starting rebalancing smallcase=%s suggestions=%d", smallcase_id, len(suggestions))
             
             # Verify smallcase exists
             smallcase_check = await db.execute(text("""
@@ -63,7 +68,7 @@ class RebalancingDBService:
             if not smallcase_row:
                 raise HTTPException(status_code=404, detail="Smallcase not found")
             
-            print(f"✅ DEBUG: Found smallcase: {smallcase_row.name}")
+            logger.info("[RebalanceDB] Found smallcase name=%s", smallcase_row.name)
             
             # Get current UTC time with timezone
             current_time = RebalancingDBService.get_utc_now()
@@ -72,14 +77,14 @@ class RebalancingDBService:
             updated_stocks = []
             for i, suggestion in enumerate(suggestions):
                 try:
-                    print(f"🔧 DEBUG: Processing suggestion {i+1}: {suggestion}")
+                    logger.info("[RebalanceDB] Processing suggestion index=%d payload=%s", i + 1, suggestion)
                     
                     stock_id = suggestion.get("stock_id")
                     suggested_weight = suggestion.get("suggested_weight")
                     symbol = suggestion.get("symbol", "UNKNOWN")
                     
                     if not stock_id or suggested_weight is None:
-                        print(f"⚠️  WARNING: Skipping suggestion {i+1}: missing required fields")
+                        logger.warning("[RebalanceDB] Skipping suggestion index=%d missing required fields", i + 1)
                         continue
                     
                     # Update the constituent weight
@@ -98,7 +103,7 @@ class RebalancingDBService:
                     })
                     
                     rows_updated = update_result.rowcount
-                    print(f"📝 DEBUG: Updated {rows_updated} rows for stock {stock_id} ({symbol})")
+                    logger.info("[RebalanceDB] Updated rows=%d stock=%s symbol=%s", rows_updated, stock_id, symbol)
                     
                     if rows_updated > 0:
                         updated_stocks.append({
@@ -109,14 +114,14 @@ class RebalancingDBService:
                             "change": suggestion.get("weight_change", 0)
                         })
                     else:
-                        print(f"⚠️  WARNING: No rows updated for stock {stock_id}")
+                        logger.warning("[RebalanceDB] No rows updated for stock=%s", stock_id)
                 
                 except Exception as e:
-                    print(f"❌ ERROR processing suggestion {i+1}: {e}")
+                    logger.exception("[RebalanceDB] Error processing suggestion index=%d", i + 1)
                     continue
             
             # Update smallcase timestamp
-            print("🔧 DEBUG: Updating smallcase timestamp...")
+            logger.info("[RebalanceDB] Updating smallcase timestamp smallcase=%s", smallcase_id)
             await db.execute(text("""
                 UPDATE smallcases 
                 SET updated_at = :updated_at
@@ -128,7 +133,7 @@ class RebalancingDBService:
             
             # Commit the changes
             await db.commit()
-            print("💾 DEBUG: Changes committed successfully")
+            logger.info("[RebalanceDB] Changes committed successfully smallcase=%s", smallcase_id)
             
             # Return result with ISO string for JSON serialization
             result = {
@@ -140,22 +145,20 @@ class RebalancingDBService:
                 "smallcase_name": smallcase_row.name
             }
             
-            print(f"✅ DEBUG: Rebalancing completed - updated {len(updated_stocks)} stocks")
+            logger.info("[RebalanceDB] Rebalancing completed updated_stocks=%d", len(updated_stocks))
             return result
-            
+
         except HTTPException:
             raise
         except Exception as e:
-            print(f"❌ ERROR in apply_rebalancing_to_database: {e}")
-            import traceback
-            traceback.print_exc()
-            
+            logger.exception("[RebalanceDB] apply_rebalancing_to_database failed smallcase=%s", smallcase_id)
+
             try:
                 await db.rollback()
-                print("🔄 DEBUG: Transaction rolled back")
+                logger.warning("[RebalanceDB] Transaction rolled back smallcase=%s", smallcase_id)
             except Exception as rollback_error:
-                print(f"⚠️  WARNING: Failed to rollback: {rollback_error}")
-            
+                logger.exception("[RebalanceDB] Failed to rollback smallcase=%s", smallcase_id)
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to apply rebalancing: {str(e)}"
@@ -171,7 +174,7 @@ class RebalancingDBService:
     ):
         """Log rebalancing activity for audit trail"""
         try:
-            print("📝 DEBUG: Attempting to log rebalancing activity...")
+            logger.info("[RebalanceDB] Attempting to log rebalancing activity smallcase=%s", smallcase_id)
             
             # Check if rebalancing_history table exists first
             table_check = await db.execute(text("""
@@ -180,9 +183,9 @@ class RebalancingDBService:
             
             table_result = table_check.fetchone()
             table_exists = table_result.table_exists if table_result else False
-            
+
             if not table_exists:
-                print("⚠️  WARNING: rebalancing_history table does not exist, skipping audit log")
+                logger.warning("[RebalanceDB] rebalancing_history table missing; skipping audit log")
                 return
             
             current_time = RebalancingDBService.get_utc_now()
@@ -216,10 +219,10 @@ class RebalancingDBService:
             })
             
             await db.commit()
-            print("✅ DEBUG: Activity logged successfully")
-            
+            logger.info("[RebalanceDB] Rebalancing activity logged smallcase=%s", smallcase_id)
+
         except Exception as e:
-            print(f"⚠️  WARNING: Failed to log rebalancing activity: {e}")
+            logger.exception("[RebalanceDB] Failed to log rebalancing activity smallcase=%s", smallcase_id)
             # Don't fail the main operation if audit logging fails
             pass
     

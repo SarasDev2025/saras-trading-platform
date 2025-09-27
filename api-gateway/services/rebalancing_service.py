@@ -1,6 +1,6 @@
 # services/rebalancing_service.py
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from decimal import Decimal, ROUND_HALF_UP
 import math
@@ -227,7 +227,7 @@ class RebalancingService:
                 "total_weight_changes": round(total_changes, 2),
                 "significant_changes": len(significant_changes),
                 "strategy_description": RebalancingService._get_strategy_description(strategy),
-                "generated_at": datetime.utcnow()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
         }
     

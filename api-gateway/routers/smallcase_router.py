@@ -205,12 +205,12 @@ async def invest_in_smallcase(
 # Keep other endpoints the same but add real auth where needed
 @router.get("", response_model=APIResponse)
 async def get_user_smallcases(
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
     db: AsyncSession = Depends(get_db)
-):
+): 
     """Get all available smallcases with user investment status"""
     try:
-        user_id = str(current_user["id"]) if current_user else None
+        user_id = str(current_user["id"])
 
         result = await db.execute(text("""
             SELECT
@@ -529,3 +529,206 @@ async def get_category_performance(db: AsyncSession = Depends(get_db)):
         return APIResponse(success=True, data=categories)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch category performance: {str(e)}")
+
+
+# ==========================================
+# SMALLCASE CLOSURE ENDPOINTS
+# ==========================================
+
+@router.get("/investments/{investment_id}/closure-preview", response_model=APIResponse)
+async def preview_smallcase_closure(
+    investment_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    closure_percentage: float = 100.0
+):
+    """Preview the closure of a smallcase investment"""
+    try:
+        from services.smallcase_closure_service import SmallcaseClosureService
+
+        if closure_percentage <= 0 or closure_percentage > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Closure percentage must be between 0 and 100"
+            )
+
+        user_id = str(current_user["id"])
+        preview = await SmallcaseClosureService.preview_closure(
+            db, user_id, investment_id, closure_percentage
+        )
+
+        return APIResponse(success=True, data=preview)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to preview closure: {str(e)}"
+        )
+
+
+@router.post("/investments/{investment_id}/close", response_model=APIResponse)
+async def close_smallcase_position(
+    investment_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    closure_percentage: float = 100.0,
+    closure_reason: str = "manual_close"
+):
+    """Close a smallcase position (full or partial)"""
+    try:
+        from services.smallcase_closure_service import SmallcaseClosureService
+
+        if closure_percentage <= 0 or closure_percentage > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="Closure percentage must be between 0 and 100"
+            )
+
+        valid_reasons = ["manual_close", "rebalance", "stop_loss", "target_reached", "risk_management"]
+        if closure_reason not in valid_reasons:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid closure reason. Must be one of: {', '.join(valid_reasons)}"
+            )
+
+        user_id = str(current_user["id"])
+        result = await SmallcaseClosureService.close_position(
+            db, user_id, investment_id, closure_reason, closure_percentage
+        )
+
+        return APIResponse(
+            success=True,
+            data=result,
+            message=f"Position {'fully closed' if closure_percentage >= 100 else 'partially closed'} successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to close position: {str(e)}"
+        )
+
+
+@router.get("/user/positions/history", response_model=APIResponse)
+async def get_user_position_history(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+):
+
+    """Get user's closed smallcase position history"""
+    try:
+        user_id = str(current_user["id"])
+
+        result = await db.execute(text("""
+            SELECT
+                h.id,
+                h.smallcase_id,
+                s.name as smallcase_name,
+                s.category,
+                h.investment_amount,
+                h.exit_value,
+                h.realized_pnl,
+                h.roi_percentage,
+                h.holding_period_days,
+                h.invested_at,
+                h.closed_at,
+                h.closure_reason,
+                h.execution_mode
+            FROM user_smallcase_position_history h
+            JOIN smallcases s ON h.smallcase_id = s.id
+            WHERE h.user_id = :user_id
+            ORDER BY h.closed_at DESC
+            LIMIT :limit OFFSET :offset
+        """), {
+            "user_id": user_id,
+            "limit": limit,
+            "offset": offset
+        })
+
+        positions = []
+        for row in result.fetchall():
+            positions.append({
+                "id": str(row.id),
+                "smallcaseId": str(row.smallcase_id),
+                "smallcaseName": row.smallcase_name,
+                "category": row.category,
+                "investmentAmount": float(row.investment_amount),
+                "exitValue": float(row.exit_value),
+                "realizedPnl": float(row.realized_pnl),
+                "roiPercentage": float(row.roi_percentage),
+                "holdingPeriodDays": row.holding_period_days,
+                "investedAt": row.invested_at.isoformat(),
+                "closedAt": row.closed_at.isoformat(),
+                "closureReason": row.closure_reason,
+                "executionMode": row.execution_mode
+            })
+
+        return APIResponse(success=True, data=positions)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch position history: {str(e)}"
+        )
+
+
+@router.get("/user/positions/closed", response_model=APIResponse)
+async def get_user_closed_investments(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """Get user's closed smallcase investments (different from history - shows current closed status)"""
+    try:
+        user_id = str(current_user["id"])
+
+        result = await db.execute(text("""
+            SELECT
+                usi.id,
+                usi.smallcase_id,
+                s.name as smallcase_name,
+                s.category,
+                usi.investment_amount,
+                usi.current_value,
+                usi.unrealized_pnl,
+                usi.exit_value,
+                usi.realized_pnl,
+                usi.closure_reason,
+                usi.status,
+                usi.invested_at,
+                usi.closed_at,
+                usi.execution_mode
+            FROM user_smallcase_investments usi
+            JOIN smallcases s ON usi.smallcase_id = s.id
+            WHERE usi.user_id = :user_id
+            AND usi.status IN ('sold', 'partial')
+            ORDER BY usi.closed_at DESC
+        """), {"user_id": user_id})
+
+        investments = []
+        for row in result.fetchall():
+            investments.append({
+                "id": str(row.id),
+                "smallcaseId": str(row.smallcase_id),
+                "smallcaseName": row.smallcase_name,
+                "category": row.category,
+                "investmentAmount": float(row.investment_amount),
+                "currentValue": float(row.current_value) if row.current_value else 0,
+                "unrealizedPnl": float(row.unrealized_pnl) if row.unrealized_pnl else 0,
+                "exitValue": float(row.exit_value) if row.exit_value else 0,
+                "realizedPnl": float(row.realized_pnl) if row.realized_pnl else 0,
+                "closureReason": row.closure_reason,
+                "status": row.status,
+                "investedAt": row.invested_at.isoformat(),
+                "closedAt": row.closed_at.isoformat() if row.closed_at else None,
+                "executionMode": row.execution_mode
+            })
+
+        return APIResponse(success=True, data=investments)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch closed investments: {str(e)}"
+        )

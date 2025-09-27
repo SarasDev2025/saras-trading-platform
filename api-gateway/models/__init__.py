@@ -44,6 +44,8 @@ class AssetType(str, Enum):
 class TransactionType(str, Enum):
     BUY = "buy"
     SELL = "sell"
+    CLOSE_POSITION = "close_position"
+    PARTIAL_CLOSE = "partial_close"
 
 
 class TransactionStatus(str, Enum):
@@ -257,7 +259,7 @@ class TradingTransaction(Base):
 
     # Constraints
     __table_args__ = (
-        CheckConstraint("transaction_type IN ('buy', 'sell')", name='check_transaction_type'),
+        CheckConstraint("transaction_type IN ('buy', 'sell', 'close_position', 'partial_close')", name='check_transaction_type'),
         CheckConstraint("status IN ('pending', 'executed', 'cancelled', 'failed')", name='check_status'),
         CheckConstraint("order_type IN ('market', 'limit', 'stop', 'stop_limit')", name='check_order_type'),
     )
@@ -406,6 +408,14 @@ class UserSmallcaseInvestment(Base):
     broker_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_broker_connections.id", ondelete="SET NULL"))
     auto_rebalance: Mapped[bool] = mapped_column(Boolean, default=False)
     last_rebalanced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Closure tracking fields
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    exit_price: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(15, 8))
+    exit_value: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(15, 2))
+    realized_pnl: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(15, 2))
+    closure_reason: Mapped[Optional[str]] = mapped_column(String(50))
+
     invested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
@@ -420,6 +430,54 @@ class UserSmallcaseInvestment(Base):
         return (
             f"<UserSmallcaseInvestment(id={self.id}, user_id={self.user_id}, smallcase_id={self.smallcase_id}, "
             f"amount={self.investment_amount}, mode={self.execution_mode})>"
+        )
+
+
+class UserSmallcasePositionHistory(Base):
+    __tablename__ = "user_smallcase_position_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    smallcase_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("smallcases.id"), nullable=False, index=True)
+    portfolio_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("portfolios.id"), nullable=False)
+
+    # Investment details
+    investment_amount: Mapped[Decimal] = mapped_column(DECIMAL(15, 2), nullable=False)
+    units_purchased: Mapped[Decimal] = mapped_column(DECIMAL(15, 8), nullable=False)
+    purchase_price: Mapped[Decimal] = mapped_column(DECIMAL(15, 8), nullable=False)
+
+    # Exit details
+    exit_value: Mapped[Decimal] = mapped_column(DECIMAL(15, 2), nullable=False)
+    exit_price: Mapped[Decimal] = mapped_column(DECIMAL(15, 8), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(DECIMAL(15, 2), nullable=False)
+
+    # Performance metrics
+    holding_period_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    roi_percentage: Mapped[Decimal] = mapped_column(DECIMAL(8, 4), nullable=False)
+
+    # Timestamps
+    invested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    # Metadata
+    closure_reason: Mapped[Optional[str]] = mapped_column(String(50))
+    execution_mode: Mapped[ExecutionMode] = mapped_column(String(10), nullable=False)
+    broker_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("user_broker_connections.id", ondelete="SET NULL"))
+
+    # Tracking
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+    smallcase: Mapped["Smallcase"] = relationship("Smallcase")
+    portfolio: Mapped["Portfolio"] = relationship("Portfolio")
+    broker_connection: Mapped[Optional["UserBrokerConnection"]] = relationship("UserBrokerConnection")
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserSmallcasePositionHistory(id={self.id}, user_id={self.user_id}, smallcase_id={self.smallcase_id}, "
+            f"realized_pnl={self.realized_pnl}, roi={self.roi_percentage}%)>"
         )
 
 

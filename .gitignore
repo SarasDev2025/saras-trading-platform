@@ -56,6 +56,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+test-results/
 
 # Frontend (web-ui) ignores
 /web-ui/node_modules/

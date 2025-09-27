@@ -14,7 +14,8 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { Badge } from "@/components/ui/badge";
 import { SmallcaseModificationModal } from "@/components/smallcases/SmallcaseModificationModal";
-import { TrendingUp, TrendingDown, Eye, Plus, Edit, ArrowUpRight } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { TrendingUp, TrendingDown, Eye, Plus, Edit, ArrowUpRight, X } from "lucide-react";
 
 type Smallcase = {
   id: string;
@@ -76,6 +77,11 @@ export default function SmallcasesPage() {
   // Modification Modal State
   const [selectedInvestment, setSelectedInvestment] = useState<UserInvestment | null>(null);
   const [isModificationOpen, setIsModificationOpen] = useState(false);
+
+  // Closure Modal State
+  const [selectedInvestmentForClosure, setSelectedInvestmentForClosure] = useState<UserInvestment | null>(null);
+  const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
+  const [isClosingPosition, setIsClosingPosition] = useState(false);
   
   const { toast } = useToast();
 
@@ -207,6 +213,44 @@ export default function SmallcasesPage() {
     }
   };
 
+  const handleClosePosition = (investment: UserInvestment) => {
+    setSelectedInvestmentForClosure(investment);
+    setIsClosureModalOpen(true);
+  };
+
+  const handleConfirmClosure = async () => {
+    if (!selectedInvestmentForClosure) return;
+
+    try {
+      setIsClosingPosition(true);
+      await apiRequest.post(`/smallcases/investments/${selectedInvestmentForClosure.id}/close`, {
+        closure_reason: 'user_exit'
+      });
+
+      toast({
+        title: "Position Closed Successfully",
+        description: `Your ${selectedInvestmentForClosure.smallcase.name} position has been closed.`,
+      });
+
+      // Refresh investments data
+      refetchInvestments();
+
+      // Close modal
+      setIsClosureModalOpen(false);
+      setSelectedInvestmentForClosure(null);
+    } catch (error: any) {
+      console.error('Position closure failed:', error);
+      const errorMessage = error.response?.data?.detail || "Failed to close position";
+      toast({
+        title: "Closure Failed",
+        description: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
+        variant: "destructive",
+      });
+    } finally {
+      setIsClosingPosition(false);
+    }
+  };
+
   const getRiskLevelColor = (riskLevel: string) => {
     switch (riskLevel.toLowerCase()) {
       case 'low': return 'bg-green-100 text-green-800';
@@ -323,22 +367,31 @@ export default function SmallcasesPage() {
                         </div>
                         
                         <div className="flex gap-2 pt-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="flex-1"
                             onClick={() => handleModify(investment)}
                           >
                             <Edit className="w-3 h-3 mr-1" />
                             Modify
                           </Button>
-                          <Button 
-                            size="sm" 
+                          <Button
+                            size="sm"
                             className="flex-1"
                             onClick={() => handleAddMore(investment)}
                           >
                             <Plus className="w-3 h-3 mr-1" />
                             Add More
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => handleClosePosition(investment)}
+                          >
+                            <X className="w-3 h-3 mr-1" />
+                            Close
                           </Button>
                         </div>
                         
@@ -540,6 +593,56 @@ export default function SmallcasesPage() {
           )}
         </div>
       </main>
+
+      {/* Closure Confirmation Modal */}
+      <AlertDialog open={isClosureModalOpen} onOpenChange={setIsClosureModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close Position</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to close your position in{' '}
+              <span className="font-semibold">{selectedInvestmentForClosure?.smallcase.name}</span>?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {selectedInvestmentForClosure && (
+            <div className="space-y-3 py-4">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Current Value:</span>
+                <span className="font-medium">₹{selectedInvestmentForClosure.currentValue.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Invested Amount:</span>
+                <span className="font-medium">₹{selectedInvestmentForClosure.investmentAmount.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">P&L:</span>
+                <span className={`font-medium ${selectedInvestmentForClosure.unrealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {selectedInvestmentForClosure.unrealizedPnL >= 0 ? '+' : ''}₹{selectedInvestmentForClosure.unrealizedPnL.toLocaleString()}
+                </span>
+              </div>
+              <div className="border-t pt-3">
+                <p className="text-sm text-muted-foreground">
+                  This action cannot be undone. Your position will be sold at the current market price.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isClosingPosition}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmClosure}
+              disabled={isClosingPosition}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isClosingPosition ? 'Closing...' : 'Close Position'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Modification Modal */}
       <SmallcaseModificationModal

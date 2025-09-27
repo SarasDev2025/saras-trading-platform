@@ -3,10 +3,15 @@ FastAPI routes for trading operations with broker integration
 """
 import uuid
 from decimal import Decimal
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, Field, validator
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
+from config.database import get_db
 
 from brokers import (
     BrokerType, OrderType as BrokerOrderType, OrderSide, BrokerFactory, broker_manager
@@ -236,16 +241,112 @@ async def get_historical_data(
 # Transaction history endpoints
 @router.get("/transactions", response_model=APIResponse)
 async def get_user_transactions(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    # current_user_id: uuid.UUID = Depends(get_current_user_id)  # Placeholder - no auth for now
+    transaction_type: str = Query(None, description="Filter by transaction type"),
+    start_date: str = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="End date (YYYY-MM-DD)")
 ):
-    """Get user's trading transactions"""
+    """Get user's trading transactions with comprehensive filtering"""
     try:
-        # Placeholder for now - return empty list
-        activity = []
-        return APIResponse(success=True, data=activity)
-    
+
+        user_id = str(current_user["id"])
+
+        # Build dynamic query
+        where_conditions = ["tt.user_id = :user_id"]
+        query_params = {"user_id": user_id, "limit": limit, "offset": offset}
+
+        if transaction_type:
+            where_conditions.append("tt.transaction_type = :transaction_type")
+            query_params["transaction_type"] = transaction_type
+
+        if start_date:
+            where_conditions.append("DATE(tt.transaction_date) >= :start_date")
+            query_params["start_date"] = start_date
+
+        if end_date:
+            where_conditions.append("DATE(tt.transaction_date) <= :end_date")
+            query_params["end_date"] = end_date
+
+        where_clause = " AND ".join(where_conditions)
+
+        result = await db.execute(text(f"""
+            SELECT
+                tt.id,
+                tt.transaction_type,
+                tt.quantity,
+                tt.price_per_unit,
+                tt.total_amount,
+                tt.fees,
+                tt.net_amount,
+                tt.broker_order_id,
+                tt.order_type,
+                tt.notes,
+                tt.status,
+                tt.transaction_date,
+                a.symbol,
+                a.name as asset_name,
+                p.name as portfolio_name,
+                ser.id as execution_run_id,
+                usi.id as investment_id,
+                s.name as smallcase_name
+            FROM trading_transactions tt
+            LEFT JOIN assets a ON tt.asset_id = a.id
+            LEFT JOIN portfolios p ON tt.portfolio_id = p.id
+            LEFT JOIN smallcase_execution_runs ser ON tt.execution_run_id = ser.id
+            LEFT JOIN user_smallcase_investments usi ON ser.investment_id = usi.id
+            LEFT JOIN smallcases s ON usi.smallcase_id = s.id
+            WHERE {where_clause}
+            ORDER BY tt.transaction_date DESC
+            LIMIT :limit OFFSET :offset
+        """), query_params)
+
+        transactions = []
+        for row in result.fetchall():
+            transactions.append({
+                "id": str(row.id),
+                "transactionType": row.transaction_type,
+                "symbol": row.symbol,
+                "assetName": row.asset_name,
+                "quantity": float(row.quantity),
+                "pricePerUnit": float(row.price_per_unit),
+                "totalAmount": float(row.total_amount),
+                "fees": float(row.fees),
+                "netAmount": float(row.net_amount),
+                "brokerOrderId": row.broker_order_id,
+                "orderType": row.order_type,
+                "notes": row.notes,
+                "status": row.status,
+                "transactionDate": row.transaction_date.isoformat(),
+                "portfolioName": row.portfolio_name,
+                "executionRunId": str(row.execution_run_id) if row.execution_run_id else None,
+                "investmentId": str(row.investment_id) if row.investment_id else None,
+                "smallcaseName": row.smallcase_name
+            })
+
+        # Get total count for pagination
+        count_result = await db.execute(text(f"""
+            SELECT COUNT(*) as total
+            FROM trading_transactions tt
+            WHERE {where_clause}
+        """), query_params)
+        total_count = count_result.scalar()
+
+        return APIResponse(
+            success=True,
+            data={
+                "transactions": transactions,
+                "pagination": {
+                    "total": total_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "hasMore": offset + limit < total_count
+                }
+            }
+        )
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

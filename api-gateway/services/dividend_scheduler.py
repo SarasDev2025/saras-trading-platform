@@ -6,14 +6,17 @@ Automated background service for dividend management and bulk order processing
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import text, select
 
+from brokers import OrderSide, OrderStatus as BrokerOrderStatus, OrderType as BrokerOrderType
+from models import UserBrokerConnection
 from services.dividend_service import DividendService
 from services.broker_selection_service import BrokerSelectionService
+from services.broker_connection_service import BrokerConnectionService
 from services.order_aggregation_service import OrderAggregationService
 
 logger = logging.getLogger(__name__)
@@ -243,62 +246,71 @@ class DividendScheduler:
             logger.error(f"❌ Error executing bulk order {bulk_order_id}: {str(e)}")
 
     async def _execute_broker_order(self, db: AsyncSession, bulk_order):
-        """Execute the actual broker order"""
+        """Execute the actual broker order via real broker APIs"""
         try:
             symbol = bulk_order.symbol
-            quantity = float(bulk_order.total_shares_to_purchase)
+            quantity = Decimal(str(bulk_order.total_shares_to_purchase))
             broker_name = bulk_order.broker_name
 
             logger.info(f"📈 Executing bulk order: {quantity} shares of {symbol} via {broker_name}")
 
-            # Get broker capabilities
-            broker_caps = await BrokerSelectionService.get_broker_capabilities(broker_name)
+            # Get master broker connection for executing aggregated orders
+            broker_connection = await self._get_master_broker_connection(db, broker_name)
 
-            # Simulate order execution (in real implementation, use actual broker APIs)
-            execution_price = float(bulk_order.target_price or 100.00)
-            broker_order_id = f"{broker_name}_{bulk_order.id}_{int(datetime.now().timestamp())}"
+            if not broker_connection:
+                logger.error(f"❌ No master broker connection found for {broker_name}")
+                await self._mark_bulk_order_failed(db, bulk_order, "No broker connection available")
+                return
 
-            # Update bulk order status
-            await db.execute(text("""
-                UPDATE dividend_bulk_orders
-                SET status = 'executed',
-                    actual_price = :actual_price,
-                    broker_order_id = :broker_order_id,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :bulk_order_id
-            """), {
-                "actual_price": execution_price,
-                "broker_order_id": broker_order_id,
-                "bulk_order_id": str(bulk_order.id)
-            })
+            # Get broker instance
+            broker, _ = await BrokerConnectionService.ensure_broker_session(broker_connection)
 
-            # Update individual DRIP transactions
-            await db.execute(text("""
-                UPDATE drip_transactions
-                SET status = 'executed',
-                    broker_transaction_id = :broker_order_id || '_' || id,
-                    updated_at = CURRENT_TIMESTAMP
-                FROM drip_bulk_order_allocations dboa
-                WHERE drip_transactions.id = dboa.drip_transaction_id
-                AND dboa.dividend_bulk_order_id = :bulk_order_id
-            """), {
-                "broker_order_id": broker_order_id,
-                "bulk_order_id": str(bulk_order.id)
-            })
+            try:
+                # Place the bulk order with the broker
+                logger.info(f"🔄 Placing bulk dividend order: {symbol} BUY {quantity} via {broker_name}")
 
-            # Update user dividend payments to reinvested status
-            await db.execute(text("""
-                UPDATE user_dividend_payments
-                SET status = 'reinvested',
-                    updated_at = CURRENT_TIMESTAMP
-                FROM drip_transactions dt
-                WHERE user_dividend_payments.id = dt.user_dividend_payment_id
-                AND dt.id IN (
-                    SELECT dboa.drip_transaction_id
-                    FROM drip_bulk_order_allocations dboa
-                    WHERE dboa.dividend_bulk_order_id = :bulk_order_id
+                broker_order = await broker.place_order(
+                    symbol=symbol,
+                    side=OrderSide.BUY,  # DRIP orders are always buy orders
+                    quantity=quantity,
+                    order_type=BrokerOrderType.MARKET
                 )
-            """), {"bulk_order_id": str(bulk_order.id)})
+
+                # Extract execution details from broker response
+                execution_price = float(broker_order.price) if hasattr(broker_order, 'price') and broker_order.price else float(bulk_order.target_price or 100.00)
+                broker_order_id = broker_order.order_id
+                order_status = broker_order.status
+
+                logger.info(f"✅ Broker order placed: {broker_order_id}, status: {order_status}")
+
+                # Update bulk order based on broker response
+                if order_status == BrokerOrderStatus.FILLED:
+                    await self._mark_bulk_order_executed(db, bulk_order, broker_order_id, execution_price)
+                elif order_status in [BrokerOrderStatus.PENDING, BrokerOrderStatus.PARTIALLY_FILLED]:
+                    await self._mark_bulk_order_pending(db, bulk_order, broker_order_id, execution_price)
+                else:
+                    await self._mark_bulk_order_failed(db, bulk_order, f"Broker order {order_status}")
+                    return
+
+            except Exception as broker_exc:
+                logger.error(f"❌ Broker API call failed for {symbol}: {str(broker_exc)}")
+                await self._mark_bulk_order_failed(db, bulk_order, f"Broker API error: {str(broker_exc)}")
+                return
+
+            # Update user dividend payments to reinvested status for successful orders
+            if order_status == BrokerOrderStatus.FILLED:
+                await db.execute(text("""
+                    UPDATE user_dividend_payments
+                    SET status = 'reinvested',
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM drip_transactions dt
+                    WHERE user_dividend_payments.id = dt.user_dividend_payment_id
+                    AND dt.id IN (
+                        SELECT dboa.drip_transaction_id
+                        FROM drip_bulk_order_allocations dboa
+                        WHERE dboa.dividend_bulk_order_id = :bulk_order_id
+                    )
+                """), {"bulk_order_id": str(bulk_order.id)})
 
             await db.commit()
 
@@ -308,6 +320,125 @@ class DividendScheduler:
             await db.rollback()
             logger.error(f"❌ Error executing broker order: {str(e)}")
             raise
+
+    async def _get_master_broker_connection(self, db: AsyncSession, broker_name: str) -> Optional[UserBrokerConnection]:
+        """Get the master/admin broker connection for executing bulk dividend orders"""
+        try:
+            # Look for a connection with alias 'master', 'admin', or 'aggregator'
+            result = await db.execute(
+                select(UserBrokerConnection).where(
+                    UserBrokerConnection.broker_type == broker_name,
+                    UserBrokerConnection.alias.in_(['master', 'admin', 'aggregator', 'dividend'])
+                ).limit(1)
+            )
+            connection = result.scalar_one_or_none()
+
+            if not connection:
+                # Fallback to any active connection of this broker type
+                result = await db.execute(
+                    select(UserBrokerConnection).where(
+                        UserBrokerConnection.broker_type == broker_name,
+                        UserBrokerConnection.status == 'active'
+                    ).limit(1)
+                )
+                connection = result.scalar_one_or_none()
+
+                if connection:
+                    logger.warning(
+                        f"⚠️ Using non-admin connection for {broker_name} dividend orders. "
+                        f"Consider setting up dedicated admin accounts."
+                    )
+
+            return connection
+
+        except Exception as exc:
+            logger.error(f"❌ Error getting master broker connection: {exc}")
+            return None
+
+    async def _mark_bulk_order_executed(self, db: AsyncSession, bulk_order, broker_order_id: str, execution_price: float):
+        """Mark bulk order as successfully executed"""
+        await db.execute(text("""
+            UPDATE dividend_bulk_orders
+            SET status = 'executed',
+                actual_price = :actual_price,
+                broker_order_id = :broker_order_id,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :bulk_order_id
+        """), {
+            "actual_price": execution_price,
+            "broker_order_id": broker_order_id,
+            "bulk_order_id": str(bulk_order.id)
+        })
+
+        # Update individual DRIP transactions to executed status
+        await db.execute(text("""
+            UPDATE drip_transactions
+            SET status = 'executed',
+                broker_transaction_id = :broker_order_id || '_' || id,
+                updated_at = CURRENT_TIMESTAMP
+            FROM drip_bulk_order_allocations dboa
+            WHERE drip_transactions.id = dboa.drip_transaction_id
+            AND dboa.dividend_bulk_order_id = :bulk_order_id
+        """), {
+            "broker_order_id": broker_order_id,
+            "bulk_order_id": str(bulk_order.id)
+        })
+
+    async def _mark_bulk_order_pending(self, db: AsyncSession, bulk_order, broker_order_id: str, execution_price: float):
+        """Mark bulk order as pending (submitted but not filled)"""
+        await db.execute(text("""
+            UPDATE dividend_bulk_orders
+            SET status = 'pending',
+                actual_price = :actual_price,
+                broker_order_id = :broker_order_id,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :bulk_order_id
+        """), {
+            "actual_price": execution_price,
+            "broker_order_id": broker_order_id,
+            "bulk_order_id": str(bulk_order.id)
+        })
+
+        # Update individual DRIP transactions to pending status
+        await db.execute(text("""
+            UPDATE drip_transactions
+            SET status = 'pending',
+                broker_transaction_id = :broker_order_id || '_' || id,
+                updated_at = CURRENT_TIMESTAMP
+            FROM drip_bulk_order_allocations dboa
+            WHERE drip_transactions.id = dboa.drip_transaction_id
+            AND dboa.dividend_bulk_order_id = :bulk_order_id
+        """), {
+            "broker_order_id": broker_order_id,
+            "bulk_order_id": str(bulk_order.id)
+        })
+
+    async def _mark_bulk_order_failed(self, db: AsyncSession, bulk_order, error_message: str):
+        """Mark bulk order as failed"""
+        await db.execute(text("""
+            UPDATE dividend_bulk_orders
+            SET status = 'failed',
+                error_message = :error_message,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :bulk_order_id
+        """), {
+            "error_message": error_message,
+            "bulk_order_id": str(bulk_order.id)
+        })
+
+        # Update individual DRIP transactions to failed status
+        await db.execute(text("""
+            UPDATE drip_transactions
+            SET status = 'failed',
+                error_message = :error_message,
+                updated_at = CURRENT_TIMESTAMP
+            FROM drip_bulk_order_allocations dboa
+            WHERE drip_transactions.id = dboa.drip_transaction_id
+            AND dboa.dividend_bulk_order_id = :bulk_order_id
+        """), {
+            "error_message": error_message,
+            "bulk_order_id": str(bulk_order.id)
+        })
 
     async def _execute_ready_bulk_orders(self, db: AsyncSession):
         """Find and execute bulk orders that are ready for execution"""

@@ -16,8 +16,8 @@ from sqlalchemy import text  # Add this line
 
 from config.database import Base, get_db
 from routers import (
-    auth_router, portfolio_router, alpaca_router, info_router, 
-    trade_router, smallcase_router, rebalancing_router, broker_router
+    auth_router, portfolio_router, alpaca_router, info_router,
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -400,6 +400,7 @@ app.include_router(auth_router.router, tags=["Authentication"])
 app.include_router(broker_router.router, prefix="/brokers", tags=["Broker Management"])
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
+app.include_router(dividend_router.router, tags=["Dividend Management"])
 app.include_router(rebalancing_router.router, prefix="/api/v1", tags=["Rebalancing"])
 app.include_router(trade_router.router, prefix="/api/v1", tags=["Trading"])
 app.include_router(alpaca_router.router, prefix="/api/v1", tags=["Alpaca"])

@@ -21,6 +21,9 @@ from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 from config.database import get_db
 from routers.auth_router import get_current_user  # Import real auth
 from models import APIResponse
+from services.order_aggregation_service import OrderAggregationService
+from services.dividend_service import DividendService
+from services.broker_selection_service import BrokerSelectionService
 
 router = APIRouter(tags=["smallcases"])
 logger = logging.getLogger(__name__)
@@ -279,6 +282,81 @@ async def invest_in_smallcase(
                 # Continue with other holdings
 
         print(f"✅ Created {holdings_created} portfolio holdings")
+
+        # Create position snapshot for dividend tracking
+        try:
+            from datetime import date
+            snapshot_date = date.today()
+
+            # Create position snapshots for dividend eligibility tracking
+            for constituent in constituents:
+                snapshot_id = str(uuid.uuid4())
+
+                # Get broker info for user (simplified - defaulting to appropriate broker based on future location logic)
+                broker_name = "zerodha"  # Will be enhanced with location-based logic
+
+                await db.execute(text("""
+                    INSERT INTO user_position_snapshots
+                    (id, user_id, asset_id, portfolio_id, snapshot_date, quantity,
+                     average_cost, market_value, broker_name, dividend_declaration_id, is_eligible)
+                    VALUES (:id, :user_id, :asset_id, :portfolio_id, :snapshot_date,
+                            :quantity, :average_cost, :market_value, :broker_name, NULL, true)
+                    ON CONFLICT (user_id, asset_id, snapshot_date, dividend_declaration_id) DO NOTHING
+                """), {
+                    "id": snapshot_id,
+                    "user_id": user_id,
+                    "asset_id": str(constituent.asset_id),
+                    "portfolio_id": portfolio_id,
+                    "snapshot_date": snapshot_date,
+                    "quantity": float(quantity_decimal.quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)),
+                    "average_cost": float(price_decimal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
+                    "market_value": float(constituent_value_decimal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),
+                    "broker_name": broker_name
+                })
+
+            print(f"📸 Created position snapshots for dividend tracking")
+
+        except Exception as snapshot_error:
+            print(f"⚠️  Warning: Failed to create position snapshots: {snapshot_error}")
+            logger.warning(f"Failed to create position snapshots: {snapshot_error}")
+            # Don't fail the investment if snapshot creation fails
+
+        # Enhanced: Add broker selection and order creation for multi-user aggregation
+        try:
+            # Get constituent symbols for broker selection
+            constituent_symbols = [row.symbol for row in constituents]
+
+            # Select optimal broker for this user and investment
+            broker_selection = await BrokerSelectionService.select_optimal_broker(
+                db, user_id, constituent_symbols, float(investment_amount)
+            )
+
+            print(f"🏦 Selected broker: {broker_selection['selected_broker']} ({broker_selection['selection_reason']})")
+
+            # Ensure broker connection exists
+            broker_connection = await BrokerSelectionService.ensure_broker_connection(
+                db, user_id, broker_selection['selected_broker']
+            )
+
+            print(f"🔗 Broker connection: {broker_connection['status']} ({broker_connection['connection_id']})")
+
+            # Update position snapshots with the selected broker
+            await db.execute(text("""
+                UPDATE user_position_snapshots
+                SET broker_name = :broker_name
+                WHERE user_id = :user_id
+                AND snapshot_date = :snapshot_date
+                AND broker_name = 'zerodha'  -- Update the placeholder we set earlier
+            """), {
+                "broker_name": broker_selection['selected_broker'],
+                "user_id": user_id,
+                "snapshot_date": snapshot_date
+            })
+
+        except Exception as broker_error:
+            print(f"⚠️  Warning: Failed to setup broker integration: {broker_error}")
+            logger.warning(f"Failed to setup broker integration: {broker_error}")
+            # Don't fail the investment if broker setup fails
 
         await db.commit()
         

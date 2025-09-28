@@ -99,10 +99,10 @@ class DividendService:
                     ph.quantity,
                     ph.average_cost,
                     ph.current_value,
-                    ubc.broker_name
+                    ubc.broker_type as broker_name
                 FROM portfolio_holdings ph
                 JOIN portfolios p ON ph.portfolio_id = p.id
-                JOIN user_broker_connections ubc ON p.user_id = ubc.user_id AND ubc.is_active = true
+                JOIN user_broker_connections ubc ON p.user_id = ubc.user_id AND ubc.status = 'active'
                 WHERE ph.asset_id = :asset_id
                 AND ph.quantity > 0
             """), {"asset_id": asset_id})

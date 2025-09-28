@@ -17,7 +17,7 @@ from sqlalchemy import text  # Add this line
 from config.database import Base, get_db
 from routers import (
     auth_router, portfolio_router, alpaca_router, info_router,
-    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -178,7 +178,12 @@ async def _ensure_security_tables():
 async def _start_background_tasks():
     """Start background maintenance tasks"""
     try:
-        # You can add background tasks here like:
+        # Initialize dividend scheduler
+        from services.dividend_scheduler import initialize_dividend_scheduler
+        await initialize_dividend_scheduler(async_session)
+        logger.info("✅ Dividend scheduler initialized")
+
+        # You can add more background tasks here like:
         # - Cleaning old audit logs
         # - Refreshing security metrics
         # - Monitoring suspicious activities
@@ -189,6 +194,16 @@ async def _start_background_tasks():
 async def _stop_background_tasks():
     """Stop background tasks"""
     try:
+        # Stop dividend scheduler
+        from services.dividend_scheduler import get_dividend_scheduler
+        try:
+            scheduler = await get_dividend_scheduler()
+            await scheduler.stop()
+            logger.info("✅ Dividend scheduler stopped")
+        except RuntimeError:
+            # Scheduler not initialized, ignore
+            pass
+
         logger.info("✅ Background tasks stopped")
     except Exception as e:
         logger.error(f"⚠️ Failed to stop background tasks: {e}")
@@ -401,6 +416,7 @@ app.include_router(broker_router.router, prefix="/brokers", tags=["Broker Manage
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
 app.include_router(dividend_router.router, tags=["Dividend Management"])
+app.include_router(dividend_scheduler_router.router, tags=["Dividend Scheduler"])
 app.include_router(rebalancing_router.router, prefix="/api/v1", tags=["Rebalancing"])
 app.include_router(trade_router.router, prefix="/api/v1", tags=["Trading"])
 app.include_router(alpaca_router.router, prefix="/api/v1", tags=["Alpaca"])

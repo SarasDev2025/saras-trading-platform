@@ -158,8 +158,8 @@ async def calculate_dividend_payments(
 @router.post("/drip/process/{asset_id}", response_model=APIResponse)
 async def process_drip_transactions(
     asset_id: str,
-    execution_date: str = Query(..., description="Date to execute DRIP transactions (YYYY-MM-DD)"),
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    execution_date: str = Query(..., description="Date to execute DRIP transactions (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db)
 ):
     """Process DRIP transactions and create bulk orders"""
@@ -193,9 +193,9 @@ async def process_drip_transactions(
 @router.get("/user/summary", response_model=APIResponse)
 async def get_user_dividend_summary(
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    db: AsyncSession = Depends(get_db)
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)")
 ):
     """Get comprehensive dividend summary for the current user"""
     try:
@@ -349,11 +349,11 @@ async def update_user_drip_preferences(
 
 @router.get("/bulk-orders", response_model=APIResponse)
 async def get_dividend_bulk_orders(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
     asset_id: Optional[str] = Query(None, description="Filter by asset ID"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    limit: int = Query(50, description="Maximum number of results"),
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
-    db: AsyncSession = Depends(get_db)
+    limit: int = Query(50, description="Maximum number of results")
 ):
     """Get dividend bulk orders with optional filtering"""
     try:
@@ -436,11 +436,11 @@ async def get_dividend_bulk_orders(
 
 @router.get("/declarations", response_model=APIResponse)
 async def get_dividend_declarations(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
     asset_id: Optional[str] = Query(None, description="Filter by asset ID"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    limit: int = Query(50, description="Maximum number of results"),
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
-    db: AsyncSession = Depends(get_db)
+    limit: int = Query(50, description="Maximum number of results")
 ):
     """Get dividend declarations with optional filtering"""
     try:

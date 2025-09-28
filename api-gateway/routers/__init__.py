@@ -8,5 +8,6 @@ from . import (
     smallcase_router,
     rebalancing_router,
     broker_router,
-    dividend_router
+    dividend_router,
+    dividend_scheduler_router
 )

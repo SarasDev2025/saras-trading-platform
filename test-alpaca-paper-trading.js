@@ -114,6 +114,12 @@ async function verifyBrokerSelection() {
     }
 
     const data = await response.json();
+    console.log(`DEBUG: Found ${data.data.length} total investments for user`);
+    console.log(`DEBUG: Looking for investment ID: ${testState.investmentId}`);
+    data.data.forEach((inv, index) => {
+        console.log(`DEBUG: Investment ${index + 1}: ${inv.id} (${inv.status})`);
+    });
+
     const investment = data.data.find(inv => inv.id === testState.investmentId);
 
     if (!investment) {
@@ -275,7 +281,7 @@ async function runAlpacaTest() {
         logInfo(`Holdings created: ${investment.holdingsCreated}`);
 
         // Wait for processing
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Step 4: Verify broker selection
         await logStep(4, 'Verify Alpaca Broker Selection');

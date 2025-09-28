@@ -86,7 +86,10 @@ async def get_user_investments(
         rows = result.fetchall()
         
         print(f"🔍 DEBUG: Found {len(rows)} investments for user {user_id}")
-        
+
+        for i, row in enumerate(rows):
+            print(f"🔍 DEBUG: Investment {i+1}: {row.id} - Status: {row.status}")
+
         for row in rows:
             investments.append({
                 "id": str(row.id),

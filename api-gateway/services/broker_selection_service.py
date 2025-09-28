@@ -55,13 +55,13 @@ class BrokerSelectionService:
             # Check if user has existing broker connections
             broker_result = await db.execute(text("""
                 SELECT
-                    ubc.broker_name,
-                    ubc.is_active,
-                    ubc.account_status,
+                    ubc.broker_type,
+                    ubc.status,
+                    ubc.paper_trading,
                     ubc.created_at
                 FROM user_broker_connections ubc
                 WHERE ubc.user_id = :user_id
-                AND ubc.is_active = true
+                AND ubc.status = 'active'
                 ORDER BY ubc.created_at DESC
                 LIMIT 1
             """), {"user_id": user_id})
@@ -88,9 +88,10 @@ class BrokerSelectionService:
                 "user_id": user_id,
                 "detected_region": detected_region,
                 "existing_broker": {
-                    "broker_name": existing_broker[0] if existing_broker else None,
-                    "is_active": existing_broker[1] if existing_broker else False,
-                    "account_status": existing_broker[2] if existing_broker else None
+                    "broker_type": existing_broker[0] if existing_broker else None,
+                    "status": existing_broker[1] if existing_broker else None,
+                    "paper_trading": existing_broker[2] if existing_broker else None,
+                    "is_active": existing_broker[1] == 'active' if existing_broker else False
                 } if existing_broker else None,
                 "regional_config": BrokerSelectionService.REGIONAL_BROKERS.get(
                     detected_region,
@@ -151,7 +152,7 @@ class BrokerSelectionService:
 
             # If user has an existing active broker connection, prefer it
             if user_prefs["existing_broker"] and user_prefs["existing_broker"]["is_active"]:
-                selected_broker = user_prefs["existing_broker"]["broker_name"]
+                selected_broker = user_prefs["existing_broker"]["broker_type"]
                 selection_reason = "existing_connection"
             else:
                 # Select based on regional preferences
@@ -178,7 +179,7 @@ class BrokerSelectionService:
                 "broker_config": user_prefs["regional_config"],
                 "needs_connection": not (user_prefs["existing_broker"] and
                                        user_prefs["existing_broker"]["is_active"] and
-                                       user_prefs["existing_broker"]["broker_name"] == selected_broker)
+                                       user_prefs["existing_broker"]["broker_type"] == selected_broker)
             }
 
         except Exception as e:
@@ -203,19 +204,19 @@ class BrokerSelectionService:
         try:
             # Check existing connection
             existing_result = await db.execute(text("""
-                SELECT id, is_active, account_status
+                SELECT id, status, paper_trading
                 FROM user_broker_connections
-                WHERE user_id = :user_id AND broker_name = :broker_name
+                WHERE user_id = :user_id AND broker_type = :broker_name
             """), {"user_id": user_id, "broker_name": broker_name})
 
             existing = existing_result.fetchone()
 
-            if existing and existing[1]:  # is_active
+            if existing and existing[1] == 'active':  # status = 'active'
                 return {
                     "connection_id": str(existing[0]),
                     "status": "existing",
                     "broker_name": broker_name,
-                    "account_status": existing[2]
+                    "account_status": "paper_trading" if existing[2] else "live"
                 }
 
             # Create new connection (simplified - in real implementation would handle broker API keys)
@@ -225,7 +226,7 @@ class BrokerSelectionService:
                 # Update existing inactive connection
                 await db.execute(text("""
                     UPDATE user_broker_connections
-                    SET is_active = true, account_status = 'paper_trading', updated_at = CURRENT_TIMESTAMP
+                    SET status = 'active', paper_trading = true, updated_at = CURRENT_TIMESTAMP
                     WHERE id = :connection_id
                 """), {"connection_id": existing[0]})
                 connection_id = str(existing[0])
@@ -234,12 +235,13 @@ class BrokerSelectionService:
                 # Create new connection
                 await db.execute(text("""
                     INSERT INTO user_broker_connections
-                    (id, user_id, broker_name, account_type, is_active, account_status, created_at)
-                    VALUES (:id, :user_id, :broker_name, 'paper', true, 'paper_trading', CURRENT_TIMESTAMP)
+                    (id, user_id, broker_type, alias, status, paper_trading, created_at)
+                    VALUES (:id, :user_id, :broker_name, :alias, 'active', true, CURRENT_TIMESTAMP)
                 """), {
                     "id": connection_id,
                     "user_id": user_id,
-                    "broker_name": broker_name
+                    "broker_name": broker_name,
+                    "alias": f"{broker_name}_primary"
                 })
                 status = "created"
 

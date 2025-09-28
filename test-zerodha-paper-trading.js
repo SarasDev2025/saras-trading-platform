@@ -8,9 +8,9 @@ const API_BASE_URL = 'http://localhost:8000';
 // Indian test user for Zerodha broker selection
 const testUser = {
     email: 'priya.sharma@example.com',
-    password: 'password123',
+    password: 'Password123',
     region: 'IN',  // Should trigger Zerodha broker selection
-    investmentAmount: 50000  // INR 50,000 - Above minimum threshold
+    investmentAmount: 150000  // $150,000 - Meets minimum threshold
 };
 
 // Test state tracking
@@ -233,7 +233,7 @@ async function generateTestReport() {
     console.log('\n📊 Test Configuration:');
     console.log(`   User: ${testUser.email}`);
     console.log(`   Region: ${testUser.region}`);
-    console.log(`   Investment Amount: ₹${testUser.investmentAmount}`);
+    console.log(`   Investment Amount: $${testUser.investmentAmount}`);
     console.log(`   Expected Broker: Zerodha`);
 
     console.log('\n📈 Test Results:');
@@ -322,8 +322,8 @@ async function runZerodhaTest() {
         await logStep(10, 'Close Investment');
         const closureResult = await closeInvestment();
         logSuccess(`Investment closed successfully`);
-        logInfo(`Exit value: ₹${closureResult.exit_value || 'N/A'}`);
-        logInfo(`Realized P&L: ₹${closureResult.realized_pnl || 'N/A'}`);
+        logInfo(`Exit value: $${closureResult.exit_value || 'N/A'}`);
+        logInfo(`Realized P&L: $${closureResult.realized_pnl || 'N/A'}`);
 
         // Generate final report
         await generateTestReport();

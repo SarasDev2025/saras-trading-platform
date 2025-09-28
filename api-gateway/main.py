@@ -165,11 +165,9 @@ async def _ensure_security_tables():
             """))
             
             # Add indexes if they don't exist
-            await conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
-                CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
-                CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip);
-            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip)"))
             
         logger.info("✅ Security tables verified/created")
         
@@ -444,13 +442,8 @@ async def startup_event():
 # Import required dependencies at the end to avoid circular imports
 try:
     from dependencies.enhanced_auth import require_admin_role
-    from datetime import datetime
-    from sqlalchemy import text
     from typing import Dict
     import time
-    from fastapi import Depends
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from config.database import get_db
 except ImportError as e:
     logger.warning(f"Some enhanced auth features may not be available: {e}")
 

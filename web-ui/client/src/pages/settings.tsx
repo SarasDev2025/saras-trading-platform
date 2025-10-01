@@ -9,16 +9,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { 
-  User, 
-  Settings as SettingsIcon, 
-  Shield, 
-  Bell, 
-  Palette, 
+import {
+  User,
+  Settings as SettingsIcon,
+  Shield,
+  Bell,
+  Palette,
   Database,
   Key,
   AlertTriangle,
-  Check
+  Check,
+  DollarSign,
+  TrendingUp
 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/hooks/use-theme";
@@ -37,7 +39,27 @@ export default function Settings() {
     stopLossDefault: "5",
     takeProfitDefault: "10",
     riskPerTrade: "2",
+    executionMode: "paper", // paper or live
+    brokerType: "alpaca", // alpaca or zerodha
   });
+
+  // Admin user check (you may want to get this from auth context)
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Auto-mapped URLs based on broker and execution mode
+  const getBrokerUrls = (brokerType: string, executionMode: string) => {
+    const urls = {
+      alpaca: {
+        paper: "https://paper-api.alpaca.markets",
+        live: "https://api.alpaca.markets"
+      },
+      zerodha: {
+        paper: "https://api.kite.trade", // Zerodha doesn't have separate paper trading URL
+        live: "https://api.kite.trade"
+      }
+    };
+    return urls[brokerType]?.[executionMode] || "";
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -51,7 +73,7 @@ export default function Settings() {
         
         <div className="p-6 h-full overflow-y-auto">
           <Tabs defaultValue="profile" className="w-full">
-            <TabsList className="grid w-full grid-cols-6 bg-[var(--carbon-gray-90)] mb-6">
+            <TabsList className={`grid w-full ${isAdmin ? 'grid-cols-7' : 'grid-cols-6'} bg-[var(--carbon-gray-90)] mb-6`}>
               <TabsTrigger value="profile" className="text-white data-[state=active]:bg-[var(--carbon-blue)]">
                 <User className="w-4 h-4 mr-2" />
                 Profile
@@ -76,6 +98,12 @@ export default function Settings() {
                 <Key className="w-4 h-4 mr-2" />
                 API
               </TabsTrigger>
+              {isAdmin && (
+                <TabsTrigger value="admin" className="text-white data-[state=active]:bg-[var(--carbon-blue)]">
+                  <Database className="w-4 h-4 mr-2" />
+                  Admin
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="profile">
@@ -125,6 +153,31 @@ export default function Settings() {
                     <Button className="w-full btn-primary mt-6">
                       Update Profile
                     </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="chart-container">
+                  <CardHeader>
+                    <CardTitle className="text-white">Developer Settings</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-white font-medium">Admin Mode</span>
+                        <div className="text-sm text-gray-400">Enable admin controls and configuration</div>
+                      </div>
+                      <Switch
+                        checked={isAdmin}
+                        onCheckedChange={setIsAdmin}
+                      />
+                    </div>
+                    {isAdmin && (
+                      <div className="p-3 bg-[var(--warning-yellow)] bg-opacity-10 border border-[var(--warning-yellow)] rounded-lg">
+                        <div className="text-xs warning-text">
+                          <strong>Admin Mode Enabled:</strong> You now have access to system configuration settings.
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -222,6 +275,89 @@ export default function Settings() {
                     <CardTitle className="text-white">Trading Preferences</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    <div className="space-y-3">
+                      <Label className="text-sm font-medium text-gray-400">Execution Mode</Label>
+                      <Select
+                        value={tradingSettings.executionMode}
+                        onValueChange={(value) => setTradingSettings({...tradingSettings, executionMode: value})}
+                      >
+                        <SelectTrigger className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)]">
+                          <SelectItem value="paper" className="text-white">
+                            <div className="flex items-center space-x-2">
+                              <TrendingUp className="w-4 h-4 text-blue-400" />
+                              <div>
+                                <div className="font-medium">Paper Trading</div>
+                                <div className="text-xs text-gray-400">Virtual money - Risk-free practice</div>
+                              </div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="live" className="text-white">
+                            <div className="flex items-center space-x-2">
+                              <DollarSign className="w-4 h-4 text-green-400" />
+                              <div>
+                                <div className="font-medium">Live Trading</div>
+                                <div className="text-xs text-gray-400">Real money - Actual profits & losses</div>
+                              </div>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {tradingSettings.executionMode === "live" && (
+                        <div className="p-3 bg-[var(--warning-yellow)] bg-opacity-10 border border-[var(--warning-yellow)] rounded-lg">
+                          <div className="flex items-center space-x-2">
+                            <AlertTriangle className="w-4 h-4 warning-text flex-shrink-0" />
+                            <div className="text-xs warning-text">
+                              <strong>Live Trading:</strong> Real money at risk. Ensure sufficient funds in broker account.
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <Separator className="bg-[var(--carbon-gray-80)]" />
+
+                    <div className="space-y-3">
+                      <Label className="text-sm font-medium text-gray-400">Broker Selection</Label>
+                      <Select
+                        value={tradingSettings.brokerType}
+                        onValueChange={(value) => setTradingSettings({...tradingSettings, brokerType: value})}
+                      >
+                        <SelectTrigger className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)]">
+                          <SelectItem value="alpaca" className="text-white">
+                            <div className="flex items-center space-x-2">
+                              <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
+                              <div>
+                                <div className="font-medium">Alpaca Trading</div>
+                                <div className="text-xs text-gray-400">US Markets • Stocks, ETFs, Crypto</div>
+                              </div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="zerodha" className="text-white">
+                            <div className="flex items-center space-x-2">
+                              <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
+                              <div>
+                                <div className="font-medium">Zerodha Kite</div>
+                                <div className="text-xs text-gray-400">India Markets • Stocks, ETFs, Mutual Funds</div>
+                              </div>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <div className="p-3 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg">
+                        <div className="text-xs text-gray-400 mb-1">Auto-mapped API Endpoint:</div>
+                        <div className="text-sm text-white font-mono">
+                          {getBrokerUrls(tradingSettings.brokerType, tradingSettings.executionMode)}
+                        </div>
+                      </div>
+                    </div>
+                    <Separator className="bg-[var(--carbon-gray-80)]" />
+
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="text-white font-medium">Auto-execute algorithms</span>
@@ -577,6 +713,137 @@ export default function Settings() {
                 </Card>
               </div>
             </TabsContent>
+
+            {isAdmin && (
+              <TabsContent value="admin">
+                <div className="space-y-6">
+                  <Card className="chart-container border-[var(--warning-yellow)]">
+                    <CardHeader>
+                      <CardTitle className="text-white flex items-center">
+                        <Database className="w-5 h-5 warning-text mr-2" />
+                        Broker URL Configuration
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-6">
+                        <div className="p-4 bg-[var(--warning-yellow)] bg-opacity-10 border border-[var(--warning-yellow)] rounded-lg">
+                          <p className="text-sm warning-text">
+                            <strong>Admin Only:</strong> These settings affect all users. Changes require system restart.
+                          </p>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div>
+                            <h4 className="text-white font-medium mb-4">Alpaca Trading URLs</h4>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                              <div>
+                                <Label className="text-sm font-medium text-gray-400">Paper Trading URL</Label>
+                                <Input
+                                  defaultValue="https://paper-api.alpaca.markets"
+                                  className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white font-mono text-sm"
+                                />
+                                <div className="text-xs text-gray-400 mt-1">ALPACA_BASE_URL</div>
+                              </div>
+                              <div>
+                                <Label className="text-sm font-medium text-gray-400">Live Trading URL</Label>
+                                <Input
+                                  defaultValue="https://api.alpaca.markets"
+                                  className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white font-mono text-sm"
+                                />
+                                <div className="text-xs text-gray-400 mt-1">ALPACA_LIVE_BASE_URL</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <Separator className="bg-[var(--carbon-gray-80)]" />
+
+                          <div>
+                            <h4 className="text-white font-medium mb-4">Zerodha Kite URLs</h4>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                              <div>
+                                <Label className="text-sm font-medium text-gray-400">Paper Trading URL</Label>
+                                <Input
+                                  defaultValue="https://api.kite.trade"
+                                  className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white font-mono text-sm"
+                                />
+                                <div className="text-xs text-gray-400 mt-1">ZERODHA_BASE_URL</div>
+                              </div>
+                              <div>
+                                <Label className="text-sm font-medium text-gray-400">Live Trading URL</Label>
+                                <Input
+                                  defaultValue="https://api.kite.trade"
+                                  className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white font-mono text-sm"
+                                />
+                                <div className="text-xs text-gray-400 mt-1">ZERODHA_LIVE_BASE_URL</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <Separator className="bg-[var(--carbon-gray-80)]" />
+
+                          <div>
+                            <h4 className="text-white font-medium mb-4">Global Settings</h4>
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="text-white font-medium">Allow Live Trading</span>
+                                  <div className="text-sm text-gray-400">Enable live trading globally for all users</div>
+                                </div>
+                                <Switch />
+                              </div>
+                              <div>
+                                <Label className="text-sm font-medium text-gray-400">Default Trading Mode</Label>
+                                <Select defaultValue="paper">
+                                  <SelectTrigger className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)]">
+                                    <SelectItem value="paper" className="text-white">Paper Trading</SelectItem>
+                                    <SelectItem value="live" className="text-white">Live Trading</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <div className="text-xs text-gray-400 mt-1">DEFAULT_TRADING_MODE</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex space-x-3">
+                            <Button variant="outline" className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)]">
+                              Test Connections
+                            </Button>
+                            <Button className="btn-primary">
+                              Save Configuration
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="chart-container">
+                    <CardHeader>
+                      <CardTitle className="text-white">System Status</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold success-text">Active</div>
+                          <div className="text-sm text-gray-400">Alpaca Connection</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold success-text">Active</div>
+                          <div className="text-sm text-gray-400">Zerodha Connection</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-white">47</div>
+                          <div className="text-sm text-gray-400">Active Users</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </main>

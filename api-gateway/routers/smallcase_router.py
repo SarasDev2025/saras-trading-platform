@@ -59,7 +59,7 @@ async def get_user_investments(
         print(f"🔍 DEBUG: Fetching investments for user {user_id}")
         
         result = await db.execute(text("""
-            SELECT 
+            SELECT
                 usi.id,
                 usi.investment_amount,
                 usi.units_purchased,
@@ -74,10 +74,15 @@ async def get_user_investments(
                 s.theme,
                 s.risk_level,
                 p.id as portfolio_id,
-                p.name as portfolio_name
+                p.name as portfolio_name,
+                ubc.id as broker_connection_id,
+                ubc.broker_type,
+                ubc.alias as broker_alias,
+                ubc.status as broker_status
             FROM user_smallcase_investments usi
             JOIN smallcases s ON usi.smallcase_id = s.id
             JOIN portfolios p ON usi.portfolio_id = p.id
+            LEFT JOIN user_broker_connections ubc ON usi.broker_connection_id = ubc.id
             WHERE usi.user_id = :user_id AND usi.status = 'active'
             ORDER BY usi.invested_at DESC
         """), {"user_id": user_id})
@@ -91,6 +96,16 @@ async def get_user_investments(
             print(f"🔍 DEBUG: Investment {i+1}: {row.id} - Status: {row.status}")
 
         for row in rows:
+            # Build broker connection info if available
+            broker_connection = None
+            if row.broker_connection_id:
+                broker_connection = {
+                    "id": str(row.broker_connection_id),
+                    "broker_type": row.broker_type,
+                    "alias": row.broker_alias,
+                    "status": row.broker_status
+                }
+
             investments.append({
                 "id": str(row.id),
                 "investmentAmount": float(row.investment_amount),
@@ -110,7 +125,8 @@ async def get_user_investments(
                 "portfolio": {
                     "id": str(row.portfolio_id),
                     "name": row.portfolio_name
-                }
+                },
+                "broker_connection": broker_connection
             })
         
         return APIResponse(success=True, data=investments)
@@ -186,8 +202,8 @@ async def invest_in_smallcase(
         nav = Decimal(str(nav_row.nav)) if nav_row.nav else DEFAULT_NAV
 
         units_purchased = investment_amount / nav
-        
-        # Create investment record
+
+        # Create investment record with broker connection
         investment_id = str(uuid.uuid4())
         await db.execute(text("""
             INSERT INTO user_smallcase_investments
@@ -220,6 +236,47 @@ async def invest_in_smallcase(
 
         constituents = constituents_result.fetchall()
         print(f"📊 Found {len(constituents)} constituents for smallcase")
+
+        # Enhanced: Add broker selection BEFORE creating holdings
+        try:
+            print(f"🚀 Starting broker selection for user {user_id} with investment ${investment_amount}")
+
+            # Get constituent symbols for broker selection
+            constituent_symbols = [row.symbol for row in constituents]
+            print(f"📊 Constituent symbols: {constituent_symbols}")
+
+            # Select optimal broker for this user and investment
+            broker_selection = await BrokerSelectionService.select_optimal_broker(
+                db, user_id, constituent_symbols, float(investment_amount)
+            )
+
+            print(f"🏦 Selected broker: {broker_selection['selected_broker']} ({broker_selection['selection_reason']})")
+
+            # Ensure broker connection exists
+            broker_connection = await BrokerSelectionService.ensure_broker_connection(
+                db, user_id, broker_selection['selected_broker']
+            )
+
+            print(f"🔗 Broker connection: {broker_connection['status']} ({broker_connection['connection_id']})")
+
+        except Exception as broker_error:
+            print(f"💥 BROKER SELECTION ERROR: {broker_error}")
+            logger.error(f"Broker selection failed: {broker_error}")
+            # Fall back to no broker connection for now
+            broker_connection = {"connection_id": None}
+            broker_selection = {"selected_broker": None}
+
+        # Update the investment record with broker connection ID
+        if broker_connection.get('connection_id'):
+            await db.execute(text("""
+                UPDATE user_smallcase_investments
+                SET broker_connection_id = :broker_connection_id
+                WHERE id = :investment_id
+            """), {
+                "broker_connection_id": broker_connection['connection_id'],
+                "investment_id": investment_id
+            })
+            print(f"✅ Updated investment with broker connection: {broker_connection['connection_id']}")
 
         # Create holdings for each constituent
         holdings_created = 0
@@ -324,42 +381,24 @@ async def invest_in_smallcase(
             logger.warning(f"Failed to create position snapshots: {snapshot_error}")
             # Don't fail the investment if snapshot creation fails
 
-        # Enhanced: Add broker selection and order creation for multi-user aggregation
-        try:
-            # Get constituent symbols for broker selection
-            constituent_symbols = [row.symbol for row in constituents]
-
-            # Select optimal broker for this user and investment
-            broker_selection = await BrokerSelectionService.select_optimal_broker(
-                db, user_id, constituent_symbols, float(investment_amount)
-            )
-
-            print(f"🏦 Selected broker: {broker_selection['selected_broker']} ({broker_selection['selection_reason']})")
-
-            # Ensure broker connection exists
-            broker_connection = await BrokerSelectionService.ensure_broker_connection(
-                db, user_id, broker_selection['selected_broker']
-            )
-
-            print(f"🔗 Broker connection: {broker_connection['status']} ({broker_connection['connection_id']})")
-
-            # Update position snapshots with the selected broker
-            await db.execute(text("""
-                UPDATE user_position_snapshots
-                SET broker_name = :broker_name
-                WHERE user_id = :user_id
-                AND snapshot_date = :snapshot_date
-                AND broker_name = 'zerodha'  -- Update the placeholder we set earlier
-            """), {
-                "broker_name": broker_selection['selected_broker'],
-                "user_id": user_id,
-                "snapshot_date": snapshot_date
-            })
-
-        except Exception as broker_error:
-            print(f"⚠️  Warning: Failed to setup broker integration: {broker_error}")
-            logger.warning(f"Failed to setup broker integration: {broker_error}")
-            # Don't fail the investment if broker setup fails
+        # Update position snapshots with the selected broker (if broker selection succeeded)
+        if broker_connection.get('connection_id') and broker_selection.get('selected_broker'):
+            try:
+                await db.execute(text("""
+                    UPDATE user_position_snapshots
+                    SET broker_name = :broker_name
+                    WHERE user_id = :user_id
+                    AND snapshot_date = :snapshot_date
+                    AND broker_name = 'zerodha'  -- Update the placeholder we set earlier
+                """), {
+                    "broker_name": broker_selection['selected_broker'],
+                    "user_id": user_id,
+                    "snapshot_date": snapshot_date
+                })
+                print(f"📊 Updated position snapshots with broker: {broker_selection['selected_broker']}")
+            except Exception as snapshot_update_error:
+                print(f"⚠️  Warning: Failed to update position snapshots with broker: {snapshot_update_error}")
+                logger.warning(f"Failed to update position snapshots with broker: {snapshot_update_error}")
 
         await db.commit()
         

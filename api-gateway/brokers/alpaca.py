@@ -16,11 +16,15 @@ logger = logging.getLogger(__name__)
 
 class AlpacaBroker(BaseBroker):
     """Alpaca Trading API integration"""
-    
-    def __init__(self, api_key: str, secret_key: str, paper_trading: bool = True):
+
+    def __init__(self, api_key: str, secret_key: str, paper_trading: bool = True, base_url: str = None):
         super().__init__(api_key, secret_key, paper_trading)
         self.secret_key = secret_key
-        self.base_url = "https://paper-api.alpaca.markets" if paper_trading else "https://api.alpaca.markets"
+        # Use provided base_url or default based on paper_trading flag
+        if base_url:
+            self.base_url = base_url
+        else:
+            self.base_url = "https://paper-api.alpaca.markets" if paper_trading else "https://api.alpaca.markets"
         self.data_url = "https://data.alpaca.markets"
         self.headers = {
             "APCA-API-KEY-ID": api_key,
@@ -29,6 +33,8 @@ class AlpacaBroker(BaseBroker):
         }
         self.account_info_cache = {}
         self.cache_expiry = None
+        self.trading_mode = "paper" if paper_trading else "live"
+        logger.info(f"Initialized Alpaca broker in {self.trading_mode} mode using {self.base_url}")
     
     async def authenticate(self) -> bool:
         """Authenticate with Alpaca"""
@@ -170,9 +176,10 @@ class AlpacaBroker(BaseBroker):
                 raise
             raise MarketDataError(str(e), "alpaca")
     
-    async def place_order(self, symbol: str, side: OrderSide, quantity: Decimal, 
-                         order_type: OrderType, price: Optional[Decimal] = None) -> Order:
-        """Place order with Alpaca"""
+    async def place_order(self, symbol: str, side: OrderSide, quantity: Decimal,
+                         order_type: OrderType, price: Optional[Decimal] = None,
+                         time_in_force: str = "day", extended_hours: bool = False) -> Order:
+        """Place order with Alpaca - supports queuing for next-day execution"""
         await self.ensure_authenticated()
         
         try:
@@ -190,8 +197,9 @@ class AlpacaBroker(BaseBroker):
                 "symbol": symbol.upper(),
                 "side": side,
                 "type": alpaca_order_type,
-                "time_in_force": "day",
-                "qty": str(int(quantity))
+                "time_in_force": time_in_force,  # day, gtc, ioc, fok, cls
+                "qty": str(int(quantity)),
+                "extended_hours": extended_hours  # Allow extended hours trading
             }
             
             # Add price for limit orders
@@ -867,6 +875,169 @@ class AlpacaBroker(BaseBroker):
     def get_account_type(self) -> str:
         """Get account type"""
         return "paper" if self.paper_trading else "live"
+
+    async def place_gtc_order(self, symbol: str, side: OrderSide, quantity: Decimal,
+                             order_type: OrderType, price: Optional[Decimal] = None) -> Order:
+        """Place Good Till Cancelled order for next-day execution monitoring"""
+        return await self.place_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            order_type=order_type,
+            price=price,
+            time_in_force="gtc",  # Good Till Cancelled
+            extended_hours=False
+        )
+
+    async def place_market_on_open_order(self, symbol: str, side: OrderSide, quantity: Decimal) -> Order:
+        """Place Market on Open order for next trading day"""
+        return await self.place_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            order_type=OrderType.MARKET,
+            price=None,
+            time_in_force="opg",  # Market on Open
+            extended_hours=False
+        )
+
+    async def place_market_on_close_order(self, symbol: str, side: OrderSide, quantity: Decimal) -> Order:
+        """Place Market on Close order for current trading day"""
+        return await self.place_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            order_type=OrderType.MARKET,
+            price=None,
+            time_in_force="cls",  # Market on Close
+            extended_hours=False
+        )
+
+    async def get_all_orders(self, status: Optional[str] = None, limit: int = 100,
+                            after: Optional[datetime] = None, until: Optional[datetime] = None) -> List[Order]:
+        """Get all orders with optional filtering"""
+        await self.ensure_authenticated()
+
+        try:
+            params = {"limit": limit}
+            if status:
+                params["status"] = status  # open, closed, all
+            if after:
+                params["after"] = after.isoformat()
+            if until:
+                params["until"] = until.isoformat()
+
+            response = await self.http_client.get(
+                f"{self.base_url}/v2/orders",
+                headers=self.headers,
+                params=params
+            )
+
+            if response.status_code == 200:
+                orders_data = response.json()
+                orders = []
+
+                status_map = {
+                    "new": OrderStatus.PENDING,
+                    "filled": OrderStatus.FILLED,
+                    "partially_filled": OrderStatus.PARTIALLY_FILLED,
+                    "canceled": OrderStatus.CANCELLED,
+                    "cancelled": OrderStatus.CANCELLED,
+                    "rejected": OrderStatus.REJECTED,
+                    "pending_new": OrderStatus.PENDING,
+                    "accepted": OrderStatus.PENDING
+                }
+
+                for order_data in orders_data:
+                    order = Order(
+                        order_id=order_data["id"],
+                        symbol=order_data["symbol"],
+                        side=OrderSide(order_data["side"]),
+                        quantity=convert_to_decimal(order_data["qty"]),
+                        order_type=OrderType(order_data["type"]),
+                        status=status_map.get(order_data["status"], OrderStatus.PENDING),
+                        price=convert_to_decimal(order_data.get("limit_price")) if order_data.get("limit_price") else None
+                    )
+                    order.filled_quantity = convert_to_decimal(order_data.get("filled_qty", 0))
+                    order.created_at = datetime.fromisoformat(order_data["created_at"].replace('Z', '+00:00'))
+                    order.updated_at = datetime.fromisoformat(order_data["updated_at"].replace('Z', '+00:00'))
+                    order.time_in_force = order_data.get("time_in_force", "day")
+                    orders.append(order)
+
+                return orders
+            else:
+                raise OrderError("Failed to fetch orders", "alpaca", str(response.status_code))
+
+        except Exception as e:
+            logger.error(f"Error fetching Alpaca orders: {e}")
+            if isinstance(e, (AuthenticationError, OrderError)):
+                raise
+            raise OrderError(str(e), "alpaca")
+
+    async def get_pending_orders(self) -> List[Order]:
+        """Get all pending/open orders for monitoring"""
+        return await self.get_all_orders(status="open")
+
+    async def get_orders_by_date(self, date: datetime) -> List[Order]:
+        """Get orders for a specific date for next-day checking"""
+        start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        return await self.get_all_orders(
+            after=start_of_day,
+            until=end_of_day,
+            limit=1000
+        )
+
+    async def check_order_execution_status(self, order_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Check execution status of multiple orders for next-day monitoring"""
+        results = {}
+
+        for order_id in order_ids:
+            try:
+                order = await self.get_order_status(order_id)
+                results[order_id] = {
+                    "status": order.status.value,
+                    "filled_quantity": float(order.filled_quantity or 0),
+                    "total_quantity": float(order.quantity),
+                    "fill_percentage": float((order.filled_quantity or 0) / order.quantity * 100),
+                    "order": order
+                }
+            except Exception as e:
+                logger.error(f"Error checking order {order_id}: {e}")
+                results[order_id] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+
+        return results
+
+    async def get_clock(self) -> Dict[str, Any]:
+        """Get market clock information"""
+        await self.ensure_authenticated()
+
+        try:
+            response = await self.http_client.get(
+                f"{self.base_url}/v2/clock",
+                headers=self.headers
+            )
+
+            if response.status_code == 200:
+                clock_data = response.json()
+                return {
+                    "timestamp": datetime.fromisoformat(clock_data["timestamp"].replace('Z', '+00:00')),
+                    "is_open": clock_data["is_open"],
+                    "next_open": datetime.fromisoformat(clock_data["next_open"].replace('Z', '+00:00')),
+                    "next_close": datetime.fromisoformat(clock_data["next_close"].replace('Z', '+00:00'))
+                }
+            else:
+                raise MarketDataError("Failed to fetch market clock", "alpaca", str(response.status_code))
+
+        except Exception as e:
+            logger.error(f"Error fetching market clock: {e}")
+            if isinstance(e, (AuthenticationError, MarketDataError)):
+                raise
+            raise MarketDataError(str(e), "alpaca")
 
 
 __all__ = ["AlpacaBroker"]

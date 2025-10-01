@@ -10,7 +10,7 @@ const testUser = {
     email: 'john.doe@example.com',
     password: 'password123',
     region: 'US',  // Should trigger Alpaca broker selection
-    investmentAmount: 150000  // Above minimum threshold
+    investmentAmount: 250000  // Above minimum threshold
 };
 
 // Test state tracking

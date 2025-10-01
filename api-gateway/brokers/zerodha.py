@@ -18,11 +18,12 @@ logger = logging.getLogger(__name__)
 
 class ZerodhaBroker(BaseBroker):
     """Zerodha Kite Connect integration"""
-    
-    def __init__(self, api_key: str, access_token: str, paper_trading: bool = True):
+
+    def __init__(self, api_key: str, access_token: str, paper_trading: bool = True, base_url: str = None):
         super().__init__(api_key, access_token, paper_trading)
         self.access_token = access_token
-        self.base_url = "https://api.kite.trade"
+        # Use provided base_url or default
+        self.base_url = base_url or "https://api.kite.trade"
         self.headers = {
             "X-Kite-Version": "3",
             "Authorization": f"token {api_key}:{access_token}"
@@ -30,10 +31,15 @@ class ZerodhaBroker(BaseBroker):
         self.instrument_cache = {}
         self.exchange_map = {
             "NSE": "NSE",
-            "BSE": "BSE", 
+            "BSE": "BSE",
             "MCX": "MCX",
             "NCDEX": "NCDEX"
         }
+        self.trading_mode = "paper" if paper_trading else "live"
+        logger.info(f"Initialized Zerodha broker in {self.trading_mode} mode using {self.base_url}")
+
+        # Note: Zerodha doesn't have separate paper/live URLs like Alpaca
+        # Paper trading simulation would be handled at the application level
     
     async def authenticate(self) -> bool:
         """Authenticate with Zerodha"""

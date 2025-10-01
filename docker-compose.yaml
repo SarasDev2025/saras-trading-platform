@@ -19,8 +19,17 @@ services:
       - ALPACA_API_KEY=${ALPACA_API_KEY}
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_BASE_URL=${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      - ALPACA_LIVE_API_KEY=${ALPACA_LIVE_API_KEY}
+      - ALPACA_LIVE_SECRET_KEY=${ALPACA_LIVE_SECRET_KEY}
+      - ALPACA_LIVE_BASE_URL=${ALPACA_LIVE_BASE_URL:-https://api.alpaca.markets}
       - ZERODHA_API_KEY=${ZERODHA_API_KEY}
       - ZERODHA_SECRET_KEY=${ZERODHA_SECRET_KEY}
+      - ZERODHA_BASE_URL=${ZERODHA_BASE_URL:-https://api.kite.trade}
+      - ZERODHA_LIVE_API_KEY=${ZERODHA_LIVE_API_KEY}
+      - ZERODHA_LIVE_SECRET_KEY=${ZERODHA_LIVE_SECRET_KEY}
+      - ZERODHA_LIVE_BASE_URL=${ZERODHA_LIVE_BASE_URL:-https://api.kite.trade}
+      - DEFAULT_TRADING_MODE=${DEFAULT_TRADING_MODE:-paper}
+      - ALLOW_LIVE_TRADING=${ALLOW_LIVE_TRADING:-false}
       - CORS_ORIGINS=http://localhost:3000,http://web-ui:3000
     depends_on:
       postgres:

@@ -54,7 +54,7 @@ class GTTOrderService:
         try:
             # Get broker connection details
             connection_result = await db.execute(text("""
-                SELECT ubc.broker_type, ubc.api_key, ubc.access_token,
+                SELECT ubc.broker_type, ubc.api_key, ubc.api_secret, ubc.credentials,
                        ubc.paper_trading, ubc.status, ubc.user_id
                 FROM user_broker_connections ubc
                 WHERE ubc.id = :broker_connection_id
@@ -70,10 +70,15 @@ class GTTOrderService:
             if connection.status != "active":
                 raise ValueError(f"Broker connection is not active: {connection.status}")
 
+            # Extract credentials from JSONB or direct columns
+            credentials = connection.credentials or {}
+            api_key = connection.api_key or credentials.get("api_key", "test_key")
+            access_token = credentials.get("access_token") or "paper_trading_token"
+
             # Initialize Zerodha broker
             broker = ZerodhaBroker(
-                api_key=connection.api_key,
-                access_token=connection.access_token,
+                api_key=api_key,
+                access_token=access_token,
                 paper_trading=connection.paper_trading
             )
 
@@ -212,7 +217,7 @@ class GTTOrderService:
         try:
             # Get broker connection details
             connection_result = await db.execute(text("""
-                SELECT ubc.broker_type, ubc.api_key, ubc.access_token, ubc.paper_trading
+                SELECT ubc.broker_type, ubc.api_key, ubc.api_secret, ubc.credentials, ubc.paper_trading
                 FROM user_broker_connections ubc
                 WHERE ubc.id = :broker_connection_id
             """), {"broker_connection_id": broker_connection_id})
@@ -221,10 +226,15 @@ class GTTOrderService:
             if not connection:
                 raise ValueError(f"Broker connection {broker_connection_id} not found")
 
+            # Extract credentials from JSONB or direct columns
+            credentials = connection.credentials or {}
+            api_key = connection.api_key or credentials.get("api_key", "test_key")
+            access_token = credentials.get("access_token") or "paper_trading_token"
+
             # Initialize Zerodha broker
             broker = ZerodhaBroker(
-                api_key=connection.api_key,
-                access_token=connection.access_token,
+                api_key=api_key,
+                access_token=access_token,
                 paper_trading=connection.paper_trading
             )
 
@@ -279,7 +289,7 @@ class GTTOrderService:
 
             # Get broker connection details
             connection_result = await db.execute(text("""
-                SELECT ubc.broker_type, ubc.api_key, ubc.access_token, ubc.paper_trading
+                SELECT ubc.broker_type, ubc.api_key, ubc.api_secret, ubc.credentials, ubc.paper_trading
                 FROM user_broker_connections ubc
                 WHERE ubc.id = :broker_connection_id
             """), {"broker_connection_id": broker_connection_id})
@@ -288,10 +298,15 @@ class GTTOrderService:
             if not connection:
                 raise ValueError(f"Broker connection {broker_connection_id} not found")
 
+            # Extract credentials from JSONB or direct columns
+            credentials = connection.credentials or {}
+            api_key = connection.api_key or credentials.get("api_key", "test_key")
+            access_token = credentials.get("access_token") or "paper_trading_token"
+
             # Initialize Zerodha broker
             broker = ZerodhaBroker(
-                api_key=connection.api_key,
-                access_token=connection.access_token,
+                api_key=api_key,
+                access_token=access_token,
                 paper_trading=connection.paper_trading
             )
 
@@ -302,6 +317,7 @@ class GTTOrderService:
             basket_response = await broker.place_basket_order(orders)
 
             # Store basket order in database
+            import json
             basket_id = str(uuid.uuid4())
             await db.execute(text("""
                 INSERT INTO basket_orders
@@ -309,7 +325,7 @@ class GTTOrderService:
                  success_count, failure_count, status, basket_details)
                 VALUES
                 (:id, :broker_connection_id, :basket_id, :orders_placed,
-                 :success_count, :failure_count, :status, :basket_details::jsonb)
+                 :success_count, :failure_count, :status, CAST(:basket_details AS jsonb))
             """), {
                 "id": basket_id,
                 "broker_connection_id": broker_connection_id,
@@ -318,7 +334,7 @@ class GTTOrderService:
                 "success_count": basket_response["success_count"],
                 "failure_count": basket_response["failure_count"],
                 "status": basket_response["status"],
-                "basket_details": str(basket_response).replace("'", '"')
+                "basket_details": json.dumps(basket_response)
             })
 
             await db.commit()
@@ -371,7 +387,7 @@ class GTTOrderService:
         try:
             # Get broker connection details
             connection_result = await db.execute(text("""
-                SELECT ubc.broker_type, ubc.api_key, ubc.access_token, ubc.paper_trading
+                SELECT ubc.broker_type, ubc.api_key, ubc.api_secret, ubc.credentials, ubc.paper_trading
                 FROM user_broker_connections ubc
                 WHERE ubc.id = :broker_connection_id
             """), {"broker_connection_id": broker_connection_id})
@@ -380,10 +396,15 @@ class GTTOrderService:
             if not connection:
                 raise ValueError(f"Broker connection {broker_connection_id} not found")
 
+            # Extract credentials from JSONB or direct columns
+            credentials = connection.credentials or {}
+            api_key = connection.api_key or credentials.get("api_key", "test_key")
+            access_token = credentials.get("access_token") or "paper_trading_token"
+
             # Initialize Zerodha broker
             broker = ZerodhaBroker(
-                api_key=connection.api_key,
-                access_token=connection.access_token,
+                api_key=api_key,
+                access_token=access_token,
                 paper_trading=connection.paper_trading
             )
 

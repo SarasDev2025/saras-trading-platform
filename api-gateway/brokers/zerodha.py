@@ -43,19 +43,26 @@ class ZerodhaBroker(BaseBroker):
     
     async def authenticate(self) -> bool:
         """Authenticate with Zerodha"""
+        # Skip authentication for paper trading mode
+        if self.paper_trading:
+            self.authenticated = True
+            self.last_auth_check = datetime.utcnow()
+            logger.info("Zerodha paper trading mode - skipping real authentication")
+            return True
+
         try:
             response = await self.http_client.get(
                 f"{self.base_url}/user/profile",
                 headers=self.headers
             )
-            
+
             if response.status_code == 200:
                 self.authenticated = True
                 self.last_auth_check = datetime.utcnow()
                 return True
             else:
                 raise AuthenticationError("Zerodha authentication failed", "zerodha", str(response.status_code))
-                
+
         except Exception as e:
             logger.error(f"Zerodha authentication failed: {e}")
             self.authenticated = False

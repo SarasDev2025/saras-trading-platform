@@ -4,6 +4,7 @@ GTT Order Router - Endpoints for Zerodha GTT, Basket, and OCO orders
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from typing import List, Dict, Any, Annotated, Optional
 from decimal import Decimal
 from pydantic import BaseModel, Field
@@ -109,7 +110,7 @@ async def place_gtt_order(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": request.broker_connection_id}
         )
         broker_conn = verify_result.fetchone()
@@ -167,7 +168,7 @@ async def list_gtt_orders(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": broker_connection_id}
         )
         broker_conn = verify_result.fetchone()
@@ -212,7 +213,7 @@ async def cancel_gtt_order(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": broker_connection_id}
         )
         broker_conn = verify_result.fetchone()
@@ -294,7 +295,7 @@ async def place_basket_order(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": request.broker_connection_id}
         )
         broker_conn = verify_result.fetchone()
@@ -373,7 +374,7 @@ async def place_oco_order(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": request.broker_connection_id}
         )
         broker_conn = verify_result.fetchone()
@@ -426,7 +427,7 @@ async def list_oco_orders(
 
         # Verify broker connection belongs to user
         verify_result = await db.execute(
-            "SELECT user_id FROM user_broker_connections WHERE id = :id",
+            text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": broker_connection_id}
         )
         broker_conn = verify_result.fetchone()

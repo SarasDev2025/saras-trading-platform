@@ -12,13 +12,14 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from config.database import get_db
 from models import APIResponse
+from services.user_service import UserService
 
 # =====================================================
 # Configuration
@@ -30,7 +31,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # =====================================================
 # Helper Functions
@@ -156,11 +156,21 @@ class ChangePasswordRequest(BaseModel):
 class AuthService:
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
-    
+        # Truncate password to 72 bytes if necessary (bcrypt limit)
+        if len(plain_password.encode('utf-8')) > 72:
+            plain_password = plain_password[:72]
+        password_bytes = plain_password.encode('utf-8')
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+
     @staticmethod
     def get_password_hash(password: str) -> str:
-        return pwd_context.hash(password)
+        # Truncate password to 72 bytes if necessary (bcrypt limit)
+        if len(password.encode('utf-8')) > 72:
+            password = password[:72]
+        password_bytes = password.encode('utf-8')
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
     
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -252,48 +262,7 @@ async def get_user_by_id(db: AsyncSession, user_id: str):
         await db.rollback()
         raise e
 
-async def create_user(db: AsyncSession, user_data: dict):
-    """Create new user"""
-    user_id = secrets.token_hex(16)
-    
-    try:
-        await db.begin()
-        
-        await db.execute(text("""
-            INSERT INTO users (
-                id, email, username, password_hash, first_name, last_name,
-                email_verified, kyc_status, account_status, created_at
-            ) VALUES (
-                :id, :email, :username, :password_hash, :first_name, :last_name,
-                :email_verified, :kyc_status, :account_status, :created_at
-            )
-        """), {
-            "id": user_id,
-            "email": user_data["email"].lower(),
-            "username": user_data["username"].lower(),
-            "password_hash": user_data["password_hash"],
-            "first_name": user_data["first_name"],
-            "last_name": user_data["last_name"],
-            "email_verified": False,
-            "kyc_status": "pending",
-            "account_status": "active",
-            "created_at": datetime.utcnow()
-        })
-        
-        # Create default portfolio for user
-        await db.execute(text("""
-            INSERT INTO portfolios (user_id, name, description, cash_balance, total_value, created_at)
-            VALUES (:user_id, 'Default Portfolio', 'Main investment portfolio', 50000.00, 50000.00, :created_at)
-        """), {
-            "user_id": user_id,
-            "created_at": datetime.utcnow()
-        })
-        
-        await db.commit()
-        return await get_user_by_id(db, user_id)
-    except Exception as e:
-        await db.rollback()
-        raise e
+# Removed duplicate create_user function - now using UserService.create_user
 
 async def store_refresh_token(db: AsyncSession, user_id: str, token: str, device_info: dict = None):
     """Store refresh token in database"""
@@ -500,7 +469,7 @@ async def register(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-    
+
     # Check username availability
     existing_username = await get_user_by_username(db, user_data.username)
     if existing_username:
@@ -508,34 +477,40 @@ async def register(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
-    
-    # Hash password and create user
-    hashed_password = AuthService.get_password_hash(user_data.password)
-    
-    user_dict = user_data.model_dump()  # Changed from dict() to model_dump()
-    user_dict["password_hash"] = hashed_password
-    del user_dict["password"]
-    
-    user = await create_user(db, user_dict)
-    
+
+    # Create user using UserService (handles password hashing internally)
+    user_dict = user_data.model_dump()
+
+    user = await UserService.create_user(user_dict)
+
     # Generate tokens
     access_token = AuthService.create_access_token({"sub": str(user.id)})
     refresh_token = AuthService.create_refresh_token(str(user.id))
-    
+
     # Store refresh token
     device_info = {
         "ip_address": str(request.client.host),
         "user_agent": request.headers.get("user-agent", "")
     }
     await store_refresh_token(db, str(user.id), refresh_token, device_info)  # Convert UUID to string
-    
+
     return APIResponse(
         success=True,
         data=TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=UserResponse(**user_to_dict(user))  # Use helper function
+            user=UserResponse(
+                id=str(user.id),
+                email=user.email,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                email_verified=user.email_verified,
+                kyc_status=user.kyc_status,
+                account_status=user.account_status,
+                created_at=user.created_at
+            )
         )
     )
 

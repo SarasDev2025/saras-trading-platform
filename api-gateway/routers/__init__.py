@@ -9,5 +9,6 @@ from . import (
     rebalancing_router,
     broker_router,
     dividend_router,
-    dividend_scheduler_router
+    dividend_scheduler_router,
+    gtt_router
 )

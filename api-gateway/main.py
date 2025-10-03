@@ -5,7 +5,7 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +18,7 @@ from sqlalchemy import text  # Add this line
 from config.database import Base, get_db
 from routers import (
     auth_router, portfolio_router, alpaca_router, info_router,
-    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -416,6 +416,7 @@ app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfol
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
 app.include_router(dividend_router.router, tags=["Dividend Management"])
 app.include_router(dividend_scheduler_router.router, tags=["Dividend Scheduler"])
+app.include_router(gtt_router.router, tags=["GTT Orders (Zerodha)"])
 app.include_router(rebalancing_router.router, prefix="/api/v1", tags=["Rebalancing"])
 app.include_router(trade_router.router, prefix="/api/v1", tags=["Trading"])
 app.include_router(alpaca_router.router, prefix="/api/v1", tags=["Alpaca"])

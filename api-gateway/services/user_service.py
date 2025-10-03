@@ -10,8 +10,8 @@ from sqlalchemy import select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import User, Portfolio, KYCStatus, AccountStatus
-from ..config.database import get_db_session, transaction, DatabaseQuery
+from models import User, Portfolio, KYCStatus, AccountStatus
+from config.database import get_db_session, transaction, DatabaseQuery
 
 
 class UserService:
@@ -21,8 +21,11 @@ class UserService:
     async def create_user(user_data: Dict[str, Any]) -> User:
         """Create a new user with default portfolio"""
         async with get_db_session() as session:
-            # Hash password
-            password_bytes = user_data['password'].encode('utf-8')
+            # Hash password (bcrypt has 72 byte limit)
+            password = user_data['password']
+            if len(password.encode('utf-8')) > 72:
+                password = password[:72]  # Truncate to 72 bytes
+            password_bytes = password.encode('utf-8')
             salt = bcrypt.gensalt()
             password_hash = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
             
@@ -84,6 +87,9 @@ class UserService:
     @staticmethod
     async def verify_password(plain_password: str, hashed_password: str) -> bool:
         """Verify password against hash"""
+        # Truncate password to 72 bytes if necessary (bcrypt limit)
+        if len(plain_password.encode('utf-8')) > 72:
+            plain_password = plain_password[:72]
         password_bytes = plain_password.encode('utf-8')
         hashed_bytes = hashed_password.encode('utf-8')
         return bcrypt.checkpw(password_bytes, hashed_bytes)
@@ -188,7 +194,9 @@ class UserService:
             if not await UserService.verify_password(current_password, user_data.password_hash):
                 raise ValueError("Current password is incorrect")
             
-            # Hash new password
+            # Hash new password (bcrypt has 72 byte limit)
+            if len(new_password.encode('utf-8')) > 72:
+                new_password = new_password[:72]  # Truncate to 72 bytes
             new_password_bytes = new_password.encode('utf-8')
             salt = bcrypt.gensalt()
             new_password_hash = bcrypt.hashpw(new_password_bytes, salt).decode('utf-8')

@@ -426,13 +426,29 @@ async def invest_in_smallcase(
 @router.get("", response_model=APIResponse)
 async def get_user_smallcases(
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
-    db: AsyncSession = Depends(get_db)
-): 
-    """Get all available smallcases with user investment status"""
+    db: AsyncSession = Depends(get_db),
+    region: str = None,
+    broker_type: str = None
+):
+    """Get all available smallcases with user investment status, optionally filtered by region/broker"""
     try:
         user_id = str(current_user["id"])
 
-        result = await db.execute(text("""
+        # Build dynamic WHERE clause for regional filtering
+        where_conditions = ["s.is_active = true"]
+        params = {"user_id": user_id}
+
+        if region:
+            where_conditions.append("s.region = :region")
+            params["region"] = region
+
+        if broker_type:
+            where_conditions.append(":broker_type = ANY(s.supported_brokers)")
+            params["broker_type"] = broker_type
+
+        where_clause = " AND ".join(where_conditions)
+
+        result = await db.execute(text(f"""
             SELECT
                 s.id,
                 s.name,
@@ -444,6 +460,9 @@ async def get_user_smallcases(
                 s.expected_return_max,
                 s.minimum_investment,
                 s.is_active,
+                s.region,
+                s.currency,
+                s.supported_brokers,
                 COUNT(DISTINCT sc.id) as constituent_count,
                 COALESCE(AVG(a.current_price * sc.weight_percentage / 100), 0) as estimated_nav,
                 CASE WHEN usi.id IS NOT NULL THEN true ELSE false END as is_invested,
@@ -455,12 +474,13 @@ async def get_user_smallcases(
             LEFT JOIN assets a ON sc.asset_id = a.id
             LEFT JOIN user_smallcase_investments usi ON s.id = usi.smallcase_id
                 AND usi.user_id = :user_id AND usi.status = 'active'
-            WHERE s.is_active = true
+            WHERE {where_clause}
             GROUP BY s.id, s.name, s.description, s.category, s.theme, s.risk_level,
                      s.expected_return_min, s.expected_return_max, s.minimum_investment, s.is_active,
+                     s.region, s.currency, s.supported_brokers,
                      usi.id, usi.investment_amount, usi.current_value, usi.unrealized_pnl
             ORDER BY s.created_at DESC
-        """), {"user_id": user_id})
+        """), params)
 
         smallcases = []
         rows = result.fetchall()
@@ -482,12 +502,74 @@ async def get_user_smallcases(
                 "isInvested": row.is_invested,
                 "investmentAmount": float(row.investment_amount) if row.investment_amount else None,
                 "currentValue": float(row.current_value) if row.current_value else None,
-                "unrealizedPnl": float(row.unrealized_pnl) if row.unrealized_pnl else None
+                "unrealizedPnl": float(row.unrealized_pnl) if row.unrealized_pnl else None,
+                "region": row.region,
+                "currency": row.currency,
+                "supportedBrokers": row.supported_brokers or [],
+                "regionName": "United States" if row.region == "US" else "India" if row.region == "IN" else row.region,
+                "isCompatible": not broker_type or broker_type in (row.supported_brokers or [])
             })
 
         return APIResponse(success=True, data=smallcases)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch smallcases: {str(e)}")
+
+
+@router.get("/regional", response_model=APIResponse)
+async def get_regional_smallcases(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """Get smallcases grouped by region with broker compatibility info"""
+    try:
+        user_id = str(current_user["id"])
+
+        result = await db.execute(text("""
+            SELECT
+                s.region,
+                s.currency,
+                unnest(s.supported_brokers) as broker_type,
+                COUNT(DISTINCT s.id) as smallcase_count,
+                AVG(s.minimum_investment) as avg_min_investment,
+                array_agg(DISTINCT s.category) as categories
+            FROM smallcases s
+            WHERE s.is_active = true
+            GROUP BY s.region, s.currency, unnest(s.supported_brokers)
+            ORDER BY s.region, broker_type
+        """))
+
+        regional_summary = {}
+        for row in result.fetchall():
+            region = row.region
+            if region not in regional_summary:
+                regional_summary[region] = {
+                    "region": region,
+                    "currency": row.currency,
+                    "region_name": "United States" if region == "US" else "India" if region == "IN" else region,
+                    "brokers": [],
+                    "total_smallcases": 0,
+                    "categories": set()
+                }
+
+            regional_summary[region]["brokers"].append({
+                "broker_type": row.broker_type,
+                "smallcase_count": row.smallcase_count,
+                "avg_min_investment": float(row.avg_min_investment)
+            })
+            regional_summary[region]["total_smallcases"] += row.smallcase_count
+            regional_summary[region]["categories"].update(row.categories or [])
+
+        # Convert sets to lists for JSON serialization
+        for region_data in regional_summary.values():
+            region_data["categories"] = list(region_data["categories"])
+
+        return APIResponse(success=True, data={
+            "regional_summary": list(regional_summary.values()),
+            "available_regions": list(regional_summary.keys()),
+            "supported_brokers": ["alpaca", "zerodha"]
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch regional smallcases: {str(e)}")
 
 
 @router.get("/{smallcase_id}", response_model=APIResponse)

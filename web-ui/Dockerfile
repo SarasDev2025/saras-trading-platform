@@ -19,4 +19,5 @@ RUN npm install -g vite serve
 
 EXPOSE 3000
 
-CMD ["vite", "preview", "--port", "3000", "--host"]
+# Use development server instead of preview for better Docker compatibility
+CMD ["npm", "run", "dev", "--", "--host", "--port", "3000"]

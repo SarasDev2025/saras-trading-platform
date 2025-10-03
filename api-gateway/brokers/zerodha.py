@@ -174,11 +174,12 @@ class ZerodhaBroker(BaseBroker):
                 raise
             raise MarketDataError(str(e), "zerodha")
     
-    async def place_order(self, symbol: str, side: OrderSide, quantity: Decimal, 
-                         order_type: OrderType, price: Optional[Decimal] = None) -> Order:
+    async def place_order(self, symbol: str, side: OrderSide, quantity: Decimal,
+                         order_type: OrderType, price: Optional[Decimal] = None,
+                         validity: str = "DAY", product: str = "CNC") -> Order:
         """Place order with Zerodha"""
         await self.ensure_authenticated()
-        
+
         try:
             # Map our order types to Zerodha format
             zerodha_order_type_map = {
@@ -187,30 +188,30 @@ class ZerodhaBroker(BaseBroker):
                 OrderType.STOP: "SL",
                 OrderType.STOP_LIMIT: "SL-M"
             }
-            
+
             zerodha_order_type = zerodha_order_type_map[order_type]
-            
+
             # Determine exchange (default to NSE for stocks)
             exchange = self._determine_exchange(symbol)
-            
+
             order_data = {
                 "tradingsymbol": symbol.upper(),
                 "exchange": exchange,
                 "transaction_type": side.upper(),
                 "order_type": zerodha_order_type,
                 "quantity": str(int(quantity)),
-                "product": "CNC",  # Cash and Carry for delivery
-                "validity": "DAY"
+                "product": product,  # CNC, MIS, NRML, CO, BO
+                "validity": validity  # DAY, IOC
             }
-            
+
             # Add price for limit orders
             if price and order_type in [OrderType.LIMIT, OrderType.STOP_LIMIT]:
                 order_data["price"] = str(float(price))
-            
+
             # Add trigger price for stop orders
             if price and order_type in [OrderType.STOP, OrderType.STOP_LIMIT]:
                 order_data["trigger_price"] = str(float(price))
-            
+
             if self.paper_trading:
                 # Mock response for paper trading
                 order_id = f"zerodha_mock_{int(datetime.utcnow().timestamp())}"
@@ -223,17 +224,17 @@ class ZerodhaBroker(BaseBroker):
                     status=OrderStatus.FILLED,
                     price=price
                 )
-            
+
             response = await self.http_client.post(
                 f"{self.base_url}/orders/regular",
                 headers=self.headers,
                 data=order_data
             )
-            
+
             if response.status_code == 200:
                 response_data = response.json()
                 order_id = response_data["data"]["order_id"]
-                
+
                 return Order(
                     order_id=order_id,
                     symbol=symbol.upper(),
@@ -246,13 +247,357 @@ class ZerodhaBroker(BaseBroker):
             else:
                 error_msg = response.json().get("message", "Order placement failed")
                 raise OrderError(error_msg, "zerodha", str(response.status_code))
-                
+
         except Exception as e:
             logger.error(f"Error placing Zerodha order: {e}")
             if isinstance(e, (AuthenticationError, OrderError)):
                 raise
             raise OrderError(str(e), "zerodha")
-    
+
+    async def place_gtt_order(self, symbol: str, side: OrderSide, quantity: Decimal,
+                             trigger_price: Decimal, limit_price: Optional[Decimal] = None,
+                             trigger_type: str = "single", product: str = "CNC") -> Dict[str, Any]:
+        """Place GTT (Good Till Triggered) order with Zerodha
+
+        Args:
+            symbol: Trading symbol
+            side: BUY or SELL
+            quantity: Number of shares
+            trigger_price: Price at which order should trigger
+            limit_price: Limit price for triggered order (None for market order)
+            trigger_type: 'single' or 'two-leg' (for OCO orders)
+            product: Product type (CNC, MIS, NRML)
+        """
+        await self.ensure_authenticated()
+
+        try:
+            exchange = self._determine_exchange(symbol)
+
+            # Build GTT order data
+            gtt_data = {
+                "tradingsymbol": symbol.upper(),
+                "exchange": exchange,
+                "trigger_type": trigger_type,
+                "last_price": str(float(trigger_price)),
+                "orders": [
+                    {
+                        "transaction_type": side.upper(),
+                        "quantity": int(quantity),
+                        "product": product,
+                        "order_type": "LIMIT" if limit_price else "MARKET",
+                        "price": str(float(limit_price)) if limit_price else "0"
+                    }
+                ]
+            }
+
+            if self.paper_trading:
+                # Mock GTT response for paper trading
+                gtt_id = f"zerodha_gtt_mock_{int(datetime.utcnow().timestamp())}"
+                return {
+                    "trigger_id": gtt_id,
+                    "symbol": symbol.upper(),
+                    "trigger_price": trigger_price,
+                    "status": "active",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "expires_at": (datetime.utcnow() + timedelta(days=365)).isoformat()
+                }
+
+            response = await self.http_client.post(
+                f"{self.base_url}/gtt/triggers",
+                headers=self.headers,
+                json=gtt_data
+            )
+
+            if response.status_code == 200:
+                response_data = response.json()
+                trigger_id = response_data["data"]["trigger_id"]
+
+                return {
+                    "trigger_id": trigger_id,
+                    "symbol": symbol.upper(),
+                    "trigger_price": trigger_price,
+                    "limit_price": limit_price,
+                    "side": side,
+                    "quantity": quantity,
+                    "status": "active",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "expires_at": (datetime.utcnow() + timedelta(days=365)).isoformat()
+                }
+            else:
+                error_msg = response.json().get("message", "GTT order placement failed")
+                raise OrderError(error_msg, "zerodha", str(response.status_code))
+
+        except Exception as e:
+            logger.error(f"Error placing Zerodha GTT order: {e}")
+            if isinstance(e, (AuthenticationError, OrderError)):
+                raise
+            raise OrderError(str(e), "zerodha")
+
+    async def place_basket_order(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Place basket order with multiple stocks (up to 20 orders)
+
+        Args:
+            orders: List of order dictionaries with symbol, side, quantity, order_type, price
+        """
+        await self.ensure_authenticated()
+
+        if len(orders) > 20:
+            raise OrderError("Maximum 20 orders allowed in basket", "zerodha")
+
+        try:
+            basket_orders = []
+            for order in orders:
+                exchange = self._determine_exchange(order["symbol"])
+
+                order_data = {
+                    "tradingsymbol": order["symbol"].upper(),
+                    "exchange": exchange,
+                    "transaction_type": order["side"].upper(),
+                    "order_type": order.get("order_type", "MARKET"),
+                    "quantity": str(int(order["quantity"])),
+                    "product": order.get("product", "CNC"),
+                    "validity": order.get("validity", "DAY")
+                }
+
+                if order.get("price"):
+                    order_data["price"] = str(float(order["price"]))
+
+                if order.get("trigger_price"):
+                    order_data["trigger_price"] = str(float(order["trigger_price"]))
+
+                basket_orders.append(order_data)
+
+            if self.paper_trading:
+                # Mock basket response for paper trading
+                return {
+                    "basket_id": f"zerodha_basket_mock_{int(datetime.utcnow().timestamp())}",
+                    "orders_placed": len(orders),
+                    "status": "completed",
+                    "success_count": len(orders),
+                    "failure_count": 0
+                }
+
+            # Place all orders in the basket
+            results = []
+            success_count = 0
+            failure_count = 0
+
+            for order_data in basket_orders:
+                try:
+                    response = await self.http_client.post(
+                        f"{self.base_url}/orders/regular",
+                        headers=self.headers,
+                        data=order_data
+                    )
+
+                    if response.status_code == 200:
+                        results.append({"status": "success", "order_id": response.json()["data"]["order_id"]})
+                        success_count += 1
+                    else:
+                        results.append({"status": "failed", "error": response.json().get("message")})
+                        failure_count += 1
+
+                except Exception as e:
+                    results.append({"status": "failed", "error": str(e)})
+                    failure_count += 1
+
+            return {
+                "basket_id": f"zerodha_basket_{int(datetime.utcnow().timestamp())}",
+                "orders_placed": len(orders),
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "results": results,
+                "status": "completed" if failure_count == 0 else "partial"
+            }
+
+        except Exception as e:
+            logger.error(f"Error placing Zerodha basket order: {e}")
+            if isinstance(e, (AuthenticationError, OrderError)):
+                raise
+            raise OrderError(str(e), "zerodha")
+
+    async def get_gtt_orders(self) -> List[Dict[str, Any]]:
+        """Get all active GTT orders"""
+        await self.ensure_authenticated()
+
+        try:
+            if self.paper_trading:
+                # Return mock GTT orders for paper trading
+                return [
+                    {
+                        "trigger_id": "mock_gtt_1",
+                        "symbol": "RELIANCE",
+                        "trigger_price": 2500.0,
+                        "status": "active",
+                        "created_at": datetime.utcnow().isoformat(),
+                        "expires_at": (datetime.utcnow() + timedelta(days=300)).isoformat()
+                    }
+                ]
+
+            response = await self.http_client.get(
+                f"{self.base_url}/gtt/triggers",
+                headers=self.headers
+            )
+
+            if response.status_code == 200:
+                gtt_data = response.json()["data"]
+                return [
+                    {
+                        "trigger_id": gtt["id"],
+                        "symbol": gtt["condition"]["tradingsymbol"],
+                        "exchange": gtt["condition"]["exchange"],
+                        "trigger_price": float(gtt["condition"]["trigger_values"][0]),
+                        "trigger_type": gtt["type"],
+                        "status": gtt["status"],
+                        "created_at": gtt["created_at"],
+                        "expires_at": gtt["expires_at"],
+                        "orders": gtt["orders"]
+                    }
+                    for gtt in gtt_data
+                ]
+            else:
+                raise MarketDataError("Failed to fetch GTT orders", "zerodha", str(response.status_code))
+
+        except Exception as e:
+            logger.error(f"Error fetching Zerodha GTT orders: {e}")
+            if isinstance(e, (AuthenticationError, MarketDataError)):
+                raise
+            raise MarketDataError(str(e), "zerodha")
+
+    async def modify_gtt_order(self, trigger_id: str, **kwargs) -> bool:
+        """Modify an existing GTT order"""
+        await self.ensure_authenticated()
+
+        try:
+            if self.paper_trading:
+                return True  # Mock success for paper trading
+
+            # Filter valid modification parameters
+            valid_params = ["quantity", "price", "trigger_price", "order_type"]
+            gtt_data = {k: v for k, v in kwargs.items() if k in valid_params}
+
+            if not gtt_data:
+                raise OrderError("No valid parameters to modify", "zerodha")
+
+            response = await self.http_client.put(
+                f"{self.base_url}/gtt/triggers/{trigger_id}",
+                headers=self.headers,
+                json=gtt_data
+            )
+
+            return response.status_code == 200
+
+        except Exception as e:
+            logger.error(f"Error modifying Zerodha GTT order: {e}")
+            if isinstance(e, (AuthenticationError, OrderError)):
+                raise
+            return False
+
+    async def cancel_gtt_order(self, trigger_id: str) -> bool:
+        """Cancel a GTT order"""
+        await self.ensure_authenticated()
+
+        try:
+            if self.paper_trading:
+                return True  # Mock success for paper trading
+
+            response = await self.http_client.delete(
+                f"{self.base_url}/gtt/triggers/{trigger_id}",
+                headers=self.headers
+            )
+
+            return response.status_code == 200
+
+        except Exception as e:
+            logger.error(f"Error cancelling Zerodha GTT order: {e}")
+            return False
+
+    async def place_oco_order(self, symbol: str, side: OrderSide, quantity: Decimal,
+                             target_price: Decimal, stop_loss_price: Decimal,
+                             product: str = "CNC") -> Dict[str, Any]:
+        """Place One-Cancels-Other (OCO) order using GTT two-leg feature
+
+        Args:
+            symbol: Trading symbol
+            side: BUY or SELL
+            quantity: Number of shares
+            target_price: Target profit price
+            stop_loss_price: Stop loss price
+            product: Product type (CNC, MIS, NRML)
+        """
+        await self.ensure_authenticated()
+
+        try:
+            exchange = self._determine_exchange(symbol)
+
+            # Create two-leg GTT order (OCO)
+            gtt_data = {
+                "tradingsymbol": symbol.upper(),
+                "exchange": exchange,
+                "trigger_type": "two-leg",
+                "last_price": str(float(target_price if side == OrderSide.SELL else stop_loss_price)),
+                "orders": [
+                    {
+                        "transaction_type": side.upper(),
+                        "quantity": int(quantity),
+                        "product": product,
+                        "order_type": "LIMIT",
+                        "price": str(float(target_price))
+                    },
+                    {
+                        "transaction_type": side.upper(),
+                        "quantity": int(quantity),
+                        "product": product,
+                        "order_type": "SL-M",
+                        "price": str(float(stop_loss_price))
+                    }
+                ]
+            }
+
+            if self.paper_trading:
+                # Mock OCO response for paper trading
+                oco_id = f"zerodha_oco_mock_{int(datetime.utcnow().timestamp())}"
+                return {
+                    "trigger_id": oco_id,
+                    "symbol": symbol.upper(),
+                    "target_price": target_price,
+                    "stop_loss_price": stop_loss_price,
+                    "status": "active",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "expires_at": (datetime.utcnow() + timedelta(days=365)).isoformat()
+                }
+
+            response = await self.http_client.post(
+                f"{self.base_url}/gtt/triggers",
+                headers=self.headers,
+                json=gtt_data
+            )
+
+            if response.status_code == 200:
+                response_data = response.json()
+                trigger_id = response_data["data"]["trigger_id"]
+
+                return {
+                    "trigger_id": trigger_id,
+                    "symbol": symbol.upper(),
+                    "target_price": target_price,
+                    "stop_loss_price": stop_loss_price,
+                    "side": side,
+                    "quantity": quantity,
+                    "status": "active",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "expires_at": (datetime.utcnow() + timedelta(days=365)).isoformat()
+                }
+            else:
+                error_msg = response.json().get("message", "OCO order placement failed")
+                raise OrderError(error_msg, "zerodha", str(response.status_code))
+
+        except Exception as e:
+            logger.error(f"Error placing Zerodha OCO order: {e}")
+            if isinstance(e, (AuthenticationError, OrderError)):
+                raise
+            raise OrderError(str(e), "zerodha")
+
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel Zerodha order"""
         await self.ensure_authenticated()

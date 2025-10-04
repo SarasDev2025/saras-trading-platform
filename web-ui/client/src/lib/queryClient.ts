@@ -29,8 +29,18 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    // Get auth token from localStorage
+    const token = localStorage.getItem('access_token');
+
+    // Build headers with auth token if available
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
@@ -38,7 +48,12 @@ export const getQueryFn: <T>(options: {
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const json = await res.json();
+
+    // Extract data from APIResponse wrapper if it exists
+    // Backend returns { success: true, data: [...] }
+    // We want just the data array
+    return json.data !== undefined ? json.data : json;
   };
 
 export const queryClient = new QueryClient({

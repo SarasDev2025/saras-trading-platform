@@ -366,32 +366,32 @@ export default function SmallcasesPage() {
                           </div>
                         </div>
                         
-                        <div className="flex gap-2 pt-2">
+                        <div className="grid grid-cols-3 gap-1.5 pt-2">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="flex-1"
+                            className="text-xs px-1.5 min-w-0"
                             onClick={() => handleModify(investment)}
                           >
-                            <Edit className="w-3 h-3 mr-1" />
-                            Modify
+                            <Edit className="w-3 h-3 md:mr-1 shrink-0" />
+                            <span className="hidden md:inline truncate">Modify</span>
                           </Button>
                           <Button
                             size="sm"
-                            className="flex-1"
+                            className="text-xs px-1.5 min-w-0"
                             onClick={() => handleAddMore(investment)}
                           >
-                            <Plus className="w-3 h-3 mr-1" />
-                            Add More
+                            <Plus className="w-3 h-3 md:mr-1 shrink-0" />
+                            <span className="hidden md:inline truncate">Add</span>
                           </Button>
                           <Button
                             variant="destructive"
                             size="sm"
-                            className="flex-1"
+                            className="text-xs px-1.5 min-w-0"
                             onClick={() => handleClosePosition(investment)}
                           >
-                            <X className="w-3 h-3 mr-1" />
-                            Close
+                            <X className="w-3 h-3 md:mr-1 shrink-0" />
+                            <span className="hidden md:inline truncate">Close</span>
                           </Button>
                         </div>
                         

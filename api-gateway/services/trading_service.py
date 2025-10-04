@@ -35,10 +35,18 @@ class TradingService:
             quantity = Decimal(str(transaction_data['quantity']))
             price_per_unit = Decimal(str(transaction_data['price_per_unit']))
             total_amount = quantity * price_per_unit
-            
+
             fees = TradingService.calculate_fees(total_amount, transaction_data['transaction_type'])
             net_amount = total_amount + fees if transaction_data['transaction_type'] == TransactionType.BUY else total_amount - fees
-            
+
+            # Validate buying power for BUY orders
+            if transaction_data['transaction_type'] == TransactionType.BUY:
+                await TradingService._validate_buying_power(
+                    session,
+                    transaction_data['portfolio_id'],
+                    net_amount
+                )
+
             # Create transaction
             transaction = TradingTransaction(
                 user_id=transaction_data['user_id'],
@@ -54,17 +62,37 @@ class TradingService:
                 notes=transaction_data.get('notes'),
                 status=TransactionStatus.PENDING
             )
-            
+
             session.add(transaction)
             await session.flush()  # Get the transaction ID
-            
+
             # Execute the transaction
             await TradingService._execute_transaction(session, transaction)
-            
+
             await session.commit()
             await session.refresh(transaction)
-            
+
             return transaction
+
+    @staticmethod
+    async def _validate_buying_power(session: AsyncSession, portfolio_id: uuid.UUID, required_cash: Decimal):
+        """Validate that portfolio has sufficient cash for the transaction"""
+        # Get current cash balance
+        portfolio_result = await session.execute(
+            select(Portfolio.cash_balance).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = portfolio_result.first()
+
+        if not portfolio:
+            raise ValueError("Portfolio not found")
+
+        cash_balance = portfolio.cash_balance
+
+        if cash_balance < required_cash:
+            raise ValueError(
+                f"Insufficient buying power. Required: ${required_cash:,.2f}, "
+                f"Available: ${cash_balance:,.2f}"
+            )
 
     @staticmethod
     async def _execute_transaction(session: AsyncSession, transaction: TradingTransaction):
@@ -145,15 +173,34 @@ class TradingService:
 
     @staticmethod
     async def _update_portfolio_cash(session: AsyncSession, transaction: TradingTransaction):
-        """Update portfolio cash balance"""
-        cash_change = -transaction.net_amount if transaction.transaction_type == TransactionType.BUY else transaction.net_amount
-        
+        """Update portfolio cash balance and track cash impact"""
+        # Calculate cash impact (negative for BUY, positive for SELL)
+        cash_impact = -transaction.net_amount if transaction.transaction_type == TransactionType.BUY else transaction.net_amount
+
+        # Update portfolio cash balance
         await session.execute(
             update(Portfolio)
             .where(Portfolio.id == transaction.portfolio_id)
             .values(
-                cash_balance=Portfolio.cash_balance + cash_change,
+                cash_balance=Portfolio.cash_balance + cash_impact,
                 updated_at=datetime.now(timezone.utc)
+            )
+        )
+
+        # Get updated cash balance
+        portfolio_result = await session.execute(
+            select(Portfolio.cash_balance).where(Portfolio.id == transaction.portfolio_id)
+        )
+        updated_portfolio = portfolio_result.first()
+        new_cash_balance = updated_portfolio.cash_balance if updated_portfolio else Decimal('0')
+
+        # Update transaction with cash impact
+        await session.execute(
+            update(TradingTransaction)
+            .where(TradingTransaction.id == transaction.id)
+            .values(
+                cash_impact=cash_impact,
+                cash_balance_after=new_cash_balance
             )
         )
 

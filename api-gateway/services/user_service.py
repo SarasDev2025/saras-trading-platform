@@ -43,12 +43,12 @@ class UserService:
             session.add(user)
             await session.flush()  # Get the user ID
             
-            # Create default portfolio
+            # Create default portfolio with virtual money for paper trading
             default_portfolio = Portfolio(
                 user_id=user.id,
                 name="Default Portfolio",
-                cash_balance=10000.00,
-                total_value=10000.00
+                cash_balance=100000.00,  # $100k virtual money for paper trading
+                total_value=100000.00
             )
             
             session.add(default_portfolio)

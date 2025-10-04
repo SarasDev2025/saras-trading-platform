@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict, Annotated
+from decimal import Decimal
 import uuid
 import re
 from config.database import get_db
@@ -8,6 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
+from services.portfolio_services import PortfolioService
 
 router = APIRouter()
 
@@ -129,6 +131,106 @@ async def create_portfolio(portfolio: CreatePortfolio, db: AsyncSession = Depend
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create portfolio: {str(e)}")
+
+# Paper Trading Endpoints - Must be before /{portfolio_id} to avoid route conflicts
+
+@router.get("/cash-balance", response_model=APIResponse)
+async def get_cash_balance(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get current cash balance for user's default portfolio
+
+    **Returns:**
+    Cash balance and buying power
+    """
+    try:
+        user_id = current_user["id"]
+
+        # Get default portfolio
+        result = await db.execute(
+            text("""
+                SELECT id, cash_balance, total_value
+                FROM portfolios
+                WHERE user_id = :user_id AND is_default = true
+                LIMIT 1
+            """),
+            {"user_id": user_id}
+        )
+
+        portfolio = result.fetchone()
+
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="No default portfolio found")
+
+        return APIResponse(
+            success=True,
+            data={
+                "portfolio_id": str(portfolio.id),
+                "cash_balance": float(portfolio.cash_balance),
+                "buying_power": float(portfolio.cash_balance),  # For paper trading, buying power = cash
+                "total_value": float(portfolio.total_value)
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get cash balance: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get cash balance: {str(e)}")
+
+class AddFundsRequest(BaseModel):
+    portfolio_id: str
+    amount: float
+
+@router.post("/add-funds", response_model=APIResponse)
+async def add_funds(
+    request: AddFundsRequest,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Add virtual funds to portfolio for paper trading
+
+    **Parameters:**
+    - **portfolio_id**: Portfolio ID to add funds to
+    - **amount**: Amount to add (min $100, max $1,000,000)
+
+    **Returns:**
+    Updated portfolio with new cash balance
+    """
+    try:
+        user_id = current_user["id"]
+        portfolio_id = uuid.UUID(request.portfolio_id)
+        amount = Decimal(str(request.amount))
+
+        # Use the service to add funds
+        updated_portfolio = await PortfolioService.add_funds(
+            portfolio_id=portfolio_id,
+            user_id=uuid.UUID(user_id),
+            amount=amount
+        )
+
+        return APIResponse(
+            success=True,
+            data={
+                "portfolio_id": str(updated_portfolio.id),
+                "cash_balance": float(updated_portfolio.cash_balance),
+                "total_value": float(updated_portfolio.total_value),
+                "amount_added": float(amount)
+            },
+            message=f"Successfully added ${amount:,.2f} to portfolio"
+        )
+
+    except ValueError as e:
+        logger.error(f"Validation error adding funds: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to add funds: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to add funds: {str(e)}")
+
+# Portfolio-specific endpoints
 
 @router.get("/{portfolio_id}", response_model=APIResponse)
 async def get_portfolio(portfolio_id: str, db: AsyncSession = Depends(get_db)):

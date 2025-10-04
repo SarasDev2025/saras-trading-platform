@@ -10,8 +10,8 @@ from sqlalchemy import select, update, delete, and_, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import Portfolio, PortfolioHolding, Asset, User, TradingTransaction, TransactionStatus
-from ..config.database import get_db_session, DatabaseQuery, CacheManager
+from models import Portfolio, PortfolioHolding, Asset, User, TradingTransaction, TransactionStatus
+from config.database import get_db_session, DatabaseQuery, CacheManager
 
 
 class PortfolioService:
@@ -441,6 +441,99 @@ class PortfolioService:
                 select(Portfolio).where(Portfolio.id == portfolio_id)
             )
             return result.scalar_one_or_none()
+
+    @staticmethod
+    async def add_funds(portfolio_id: uuid.UUID, user_id: uuid.UUID, amount: Decimal) -> Optional[Portfolio]:
+        """Add virtual funds to portfolio for paper trading"""
+        # Validate amount
+        if amount <= 0:
+            raise ValueError("Amount must be greater than 0")
+
+        if amount < 100:
+            raise ValueError("Minimum deposit is $100")
+
+        if amount > 1000000:
+            raise ValueError("Maximum deposit is $1,000,000")
+
+        async with get_db_session() as session:
+            # Verify portfolio belongs to user
+            portfolio_result = await session.execute(
+                select(Portfolio)
+                .where(and_(Portfolio.id == portfolio_id, Portfolio.user_id == user_id))
+            )
+            portfolio = portfolio_result.scalar_one_or_none()
+
+            if not portfolio:
+                raise ValueError("Portfolio not found or unauthorized")
+
+            # Check total added amount limit
+            config_result = await session.execute(
+                text("SELECT total_added, max_top_up FROM virtual_money_config WHERE user_id = :user_id"),
+                {"user_id": str(user_id)}
+            )
+            config = config_result.fetchone()
+
+            if config:
+                total_added = Decimal(str(config.total_added or 0))
+                max_top_up = Decimal(str(config.max_top_up or 1000000))
+
+                if total_added + amount > max_top_up:
+                    raise ValueError(f"Cannot exceed maximum top-up limit of ${max_top_up:,.2f}. "
+                                   f"You have already added ${total_added:,.2f}")
+
+            # Update portfolio cash balance and total value
+            new_cash_balance = portfolio.cash_balance + amount
+            new_total_value = portfolio.total_value + amount
+
+            await session.execute(
+                update(Portfolio)
+                .where(Portfolio.id == portfolio_id)
+                .values(
+                    cash_balance=new_cash_balance,
+                    total_value=new_total_value,
+                    updated_at=datetime.now(timezone.utc)
+                )
+            )
+
+            # Create transaction record for deposit (asset_id can be NULL for deposits)
+            await session.execute(
+                text("""
+                    INSERT INTO trading_transactions
+                    (user_id, portfolio_id, asset_id, transaction_type, status, total_amount, net_amount,
+                     cash_impact, cash_balance_after, transaction_date, notes)
+                    VALUES
+                    (:user_id, :portfolio_id, NULL, 'deposit', 'executed', :amount, :amount,
+                     :amount, :new_balance, CURRENT_TIMESTAMP, 'Virtual money deposit')
+                """),
+                {
+                    "user_id": str(user_id),
+                    "portfolio_id": str(portfolio_id),
+                    "amount": float(amount),
+                    "new_balance": float(new_cash_balance)
+                }
+            )
+
+            # Update virtual money config
+            if config:
+                await session.execute(
+                    text("""
+                        UPDATE virtual_money_config
+                        SET total_added = total_added + :amount, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = :user_id
+                    """),
+                    {"amount": float(amount), "user_id": str(user_id)}
+                )
+
+            await session.commit()
+
+            # Clear cache
+            await CacheManager.delete(f"portfolio:{portfolio_id}")
+
+            # Return updated portfolio
+            result = await session.execute(
+                select(Portfolio).where(Portfolio.id == portfolio_id)
+            )
+            return result.scalar_one()
 
     @staticmethod
     async def get_diversification_score(portfolio_id: uuid.UUID) -> Dict[str, Any]:

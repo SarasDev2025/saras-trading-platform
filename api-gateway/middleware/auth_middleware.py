@@ -408,12 +408,16 @@ class EnhancedTokenService:
                 return None
             
             # Check if account is locked
-            if (user_row.locked_until and 
-                user_row.locked_until > datetime.now(timezone.utc)):
-                raise HTTPException(
-                    status_code=status.HTTP_423_LOCKED,
-                    detail="Account is temporarily locked"
-                )
+            if user_row.locked_until:
+                locked_until = user_row.locked_until
+                if locked_until.tzinfo is None:
+                    locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+                if locked_until > datetime.now(timezone.utc):
+                    raise HTTPException(
+                        status_code=status.HTTP_423_LOCKED,
+                        detail="Account is temporarily locked"
+                    )
             
             # Check account status - match your database values (lowercase)
             if user_row.account_status not in ["active", "verified"]:

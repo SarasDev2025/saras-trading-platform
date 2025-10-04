@@ -72,3 +72,4 @@ test-results/
 /web-ui/*.lock
 
 node_modules/
+playwright-report/

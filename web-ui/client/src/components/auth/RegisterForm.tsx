@@ -2,9 +2,19 @@
 // components/auth/RegisterForm.tsx - Registration Component
 // =====================================================
 
+import React, { useState } from 'react';
+import { Link, useLocation } from 'wouter';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { TrendingUp, Eye, EyeOff, Loader2 } from 'lucide-react';
+
 export const RegisterForm: React.FC = () => {
   const { register } = useAuth();
-  const navigate = useNavigate();
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   
   const [formData, setFormData] = useState({
@@ -32,11 +42,57 @@ export const RegisterForm: React.FC = () => {
       return;
     }
 
-    // Validate password strength (basic check)
+    // Validate password strength
     if (formData.password.length < 8) {
       toast({
         title: "Weak Password",
         description: "Password must be at least 8 characters long.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!/[A-Z]/.test(formData.password)) {
+      toast({
+        title: "Weak Password",
+        description: "Password must contain at least one uppercase letter.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!/[a-z]/.test(formData.password)) {
+      toast({
+        title: "Weak Password",
+        description: "Password must contain at least one lowercase letter.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!/[0-9]/.test(formData.password)) {
+      toast({
+        title: "Weak Password",
+        description: "Password must contain at least one digit.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate username
+    if (formData.username.length < 3) {
+      toast({
+        title: "Invalid Username",
+        description: "Username must be at least 3 characters long.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(formData.username)) {
+      toast({
+        title: "Invalid Username",
+        description: "Username must be alphanumeric (with optional _ or -).",
         variant: "destructive",
       });
       return;
@@ -52,7 +108,7 @@ export const RegisterForm: React.FC = () => {
         title: "Registration Successful",
         description: "Welcome to Saras Trading Platform!",
       });
-      navigate('/dashboard');
+      setLocation('/dashboard');
     } catch (error: any) {
       toast({
         title: "Registration Failed",
@@ -126,6 +182,9 @@ export const RegisterForm: React.FC = () => {
                 required
                 disabled={isLoading}
               />
+              <p className="text-xs text-gray-500">
+                3-30 characters, alphanumeric with optional _ or -
+              </p>
             </div>
             
             <div className="space-y-2">
@@ -170,7 +229,7 @@ export const RegisterForm: React.FC = () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500">
-                Password must be at least 8 characters long
+                Password must be at least 8 characters with uppercase, lowercase, and digit
               </p>
             </div>
 

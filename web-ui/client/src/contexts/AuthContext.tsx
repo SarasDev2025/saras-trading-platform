@@ -67,6 +67,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const register = async (userData: RegisterData) => {
     try {
+      // Clear any existing session first
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      setUser(null);
+
       const response = await apiRequest.post('/auth/register', userData);
 
       if (response.data.success) {

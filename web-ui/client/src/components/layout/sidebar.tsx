@@ -1,17 +1,18 @@
 import { Link, useLocation } from "wouter";
-import { 
-  Home, 
-  Wallet, 
-  TrendingUp, 
-  Bot, 
-  Target, 
-  BarChart3, 
+import {
+  Home,
+  Wallet,
+  TrendingUp,
+  Bot,
+  Target,
+  BarChart3,
   Settings,
   LogOut,
   Activity,
   Package
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
@@ -25,7 +26,20 @@ const navigation = [
 ];
 
 export function Sidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    setLocation('/auth/login');
+  };
+
+  const userInitials = user ?
+    `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() :
+    'U';
+  const userName = user ?
+    `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email :
+    'User';
 
   return (
     <aside className="w-64 sidebar-nav flex-shrink-0 flex flex-col">
@@ -62,13 +76,17 @@ export function Sidebar() {
       <div className="mt-auto p-6 border-t border-[var(--carbon-gray-80)]">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 bg-carbon-blue rounded-full flex items-center justify-center">
-            <span className="text-white font-medium">JD</span>
+            <span className="text-white font-medium">{userInitials}</span>
           </div>
           <div className="flex-1">
-            <p className="font-medium text-white">John Doe</p>
-            <p className="text-sm text-gray-400">Portfolio Manager</p>
+            <p className="font-medium text-white">{userName}</p>
+            <p className="text-sm text-gray-400">Trader</p>
           </div>
-          <button className="text-gray-400 hover:text-white transition-colors">
+          <button
+            onClick={handleLogout}
+            className="text-gray-400 hover:text-white transition-colors"
+            title="Logout"
+          >
             <LogOut className="w-4 h-4" />
           </button>
         </div>

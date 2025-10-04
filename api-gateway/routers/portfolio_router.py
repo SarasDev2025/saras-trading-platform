@@ -72,10 +72,13 @@ mock_portfolios = [
 
 @router.get("", response_model=APIResponse)
 @router.get("/", response_model=APIResponse)
-async def get_portfolios(db: AsyncSession = Depends(get_db)):
+async def get_portfolios(
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
     """Get all portfolios for the current user"""
     try:
-        user_id = await get_current_user_id()
+        user_id = current_user["id"]
         
         result = await db.execute(text("""
             SELECT p.id, p.name, p.description, p.currency, p.total_value, p.cash_balance
@@ -100,10 +103,14 @@ async def get_portfolios(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolios: {str(e)}")
 
 @router.post("/", response_model=APIResponse)
-async def create_portfolio(portfolio: CreatePortfolio, db: AsyncSession = Depends(get_db)):
+async def create_portfolio(
+    portfolio: CreatePortfolio,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
     """Create a new portfolio"""
     try:
-        user_id = await get_current_user_id()
+        user_id = current_user["id"]
         portfolio_id = str(uuid.uuid4())
         
         await db.execute(text("""

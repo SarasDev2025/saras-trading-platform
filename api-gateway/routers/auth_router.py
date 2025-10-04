@@ -2,7 +2,7 @@
 # auth_router.py - Complete Authentication Backend - FIXED
 # =====================================================
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import secrets
 import hashlib
@@ -356,8 +356,15 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
             return None
         
         # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.utcnow():
-            return None
+        if user.locked_until:
+            locked_until = user.locked_until
+            if locked_until.tzinfo is None:
+                # Stored timestamps are UTC; attach tzinfo so we can compare safely
+                locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            if locked_until > now:
+                return None
         
         if not AuthService.verify_password(password, user.password_hash):
             # Increment failed login attempts
@@ -371,7 +378,7 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
                 WHERE id = :user_id
             """), {
                 "user_id": str(user.id),  # Convert UUID to string
-                "lock_time": datetime.utcnow() + timedelta(minutes=15)
+                "lock_time": datetime.now(timezone.utc) + timedelta(minutes=15)
             })
             await db.commit()
             return None
@@ -441,11 +448,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         raise credentials_exception
     
     # Check if account is locked
-    if user.locked_until and user.locked_until > datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail="Account is temporarily locked due to too many failed login attempts"
-        )
+    if user.locked_until:
+        locked_until = user.locked_until
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+        if locked_until > datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Account is temporarily locked due to too many failed login attempts"
+            )
     
     return user
 

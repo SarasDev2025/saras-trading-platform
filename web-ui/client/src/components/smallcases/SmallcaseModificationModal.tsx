@@ -11,6 +11,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/axios';
+import { useBuyingPowerCheck } from '@/hooks/useBuyingPowerCheck';
+import { InsufficientFundsDialog } from '@/components/trading/insufficient-funds-dialog';
 import { 
   Edit, 
   TrendingUp, 
@@ -143,11 +145,34 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
   const [activeTab, setActiveTab] = useState('current');
   const { toast } = useToast();
 
+  const {
+    checkBuyingPower,
+    showInsufficientDialog,
+    insufficientDetails,
+    closeInsufficientDialog,
+    savePendingOrder,
+    getPendingOrder,
+    clearPendingOrder,
+  } = useBuyingPowerCheck();
+
   useEffect(() => {
     if (isOpen && investment) {
       loadCurrentComposition();
       setActiveTab('current');
       setRebalancingSuggestions(null);
+
+      // Check for pending rebalancing
+      const pending = getPendingOrder();
+      if (pending && pending.type === "smallcase_rebalance" && pending.data.smallcaseId === investment.smallcase.id) {
+        setRebalancingSuggestions(pending.data.suggestions);
+        setSelectedStrategy(pending.data.strategy);
+        setActiveTab('apply');
+
+        toast({
+          title: "Rebalancing Restored",
+          description: "Your pending rebalancing has been restored. Review and apply when ready.",
+        });
+      }
     }
   }, [isOpen, investment]);
 
@@ -198,14 +223,43 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
 
   const applyRebalancing = async () => {
     if (!rebalancingSuggestions || !investment) return;
-    
+
+    // Calculate total required cash for rebalancing
+    let totalRequired = 0;
+    if (currentComposition) {
+      rebalancingSuggestions.suggestions.forEach((suggestion) => {
+        if (suggestion.action === 'increase') {
+          const stock = currentComposition.stocks.find(s => s.stock_id === suggestion.stock_id);
+          if (stock) {
+            const weightIncrease = suggestion.weight_change;
+            const valueIncrease = (investment.currentValue * weightIncrease) / 100;
+            totalRequired += valueIncrease;
+          }
+        }
+      });
+    }
+
+    // Check buying power before applying
+    if (totalRequired > 0) {
+      if (!checkBuyingPower(totalRequired)) {
+        // Save pending rebalancing
+        savePendingOrder("smallcase_rebalance", {
+          smallcaseId: investment.smallcase.id,
+          suggestions: rebalancingSuggestions,
+          strategy: selectedStrategy,
+        }, totalRequired);
+        return;
+      }
+    }
+
     setIsApplying(true);
     try {
       const response = await apiRequest.post(`/api/v1/smallcases/${investment.smallcase.id}/rebalance/apply`, {
         suggestions: rebalancingSuggestions.suggestions
       });
-      
+
       if (response.data.success) {
+        clearPendingOrder(); // Clear saved pending rebalancing
         onApplyRebalancing(response.data.data);
         toast({
           title: "Rebalancing Applied",
@@ -213,13 +267,22 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
         });
         onClose();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to apply rebalancing:', error);
-      toast({
-        title: "Failed to Apply Rebalancing",
-        description: "Could not apply rebalancing changes. Please try again.",
-        variant: "destructive",
-      });
+      const errorMessage = error?.response?.data?.detail || error?.message || "";
+      if (errorMessage.includes("Insufficient buying power")) {
+        toast({
+          title: "Insufficient Funds",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Failed to Apply Rebalancing",
+          description: "Could not apply rebalancing changes. Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsApplying(false);
     }
@@ -265,14 +328,15 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Edit className="w-5 h-5" />
-            Modify {investment?.smallcase?.name}
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="w-5 h-5" />
+              Modify {investment?.smallcase?.name}
+            </DialogTitle>
+          </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4">
@@ -634,5 +698,16 @@ export const SmallcaseModificationModal: React.FC<SmallcaseModificationModalProp
         </Tabs>
       </DialogContent>
     </Dialog>
+
+    {insufficientDetails && (
+      <InsufficientFundsDialog
+        isOpen={showInsufficientDialog}
+        onClose={closeInsufficientDialog}
+        required={insufficientDetails.required}
+        available={insufficientDetails.available}
+        shortfall={insufficientDetails.shortfall}
+      />
+    )}
+    </>
   );
 };

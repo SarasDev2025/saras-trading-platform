@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { Portfolio } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AddFundsModal } from "./add-funds-modal";
+import { useToast } from "@/hooks/use-toast";
 
 export function PortfolioOverview() {
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+  const { toast } = useToast();
 
   const { data: portfolios, isLoading } = useQuery<Portfolio[]>({
     queryKey: ["/api/portfolios"],
@@ -18,6 +20,29 @@ export function PortfolioOverview() {
   const { data: cashBalanceData, isLoading: isCashLoading } = useQuery({
     queryKey: ["/api/portfolios/cash-balance"],
   });
+
+  // Check for pending orders on mount and after funds are added
+  useEffect(() => {
+    const checkPendingOrders = () => {
+      const stored = localStorage.getItem("pendingOrder");
+      if (stored) {
+        try {
+          const pending = JSON.parse(stored);
+          const orderType = pending.type === "quick_trade" ? "trade order" : "rebalancing";
+
+          toast({
+            title: "Pending Order Found",
+            description: `You have a pending ${orderType}. Complete your transaction to restore it.`,
+            duration: 8000,
+          });
+        } catch (error) {
+          console.error("Failed to parse pending order:", error);
+        }
+      }
+    };
+
+    checkPendingOrders();
+  }, []);
 
   if (isLoading) {
     return (
@@ -125,7 +150,18 @@ export function PortfolioOverview() {
 
       <AddFundsModal
         isOpen={isAddFundsOpen}
-        onClose={() => setIsAddFundsOpen(false)}
+        onClose={() => {
+          setIsAddFundsOpen(false);
+          // Check for pending orders after modal closes (funds might have been added)
+          const stored = localStorage.getItem("pendingOrder");
+          if (stored) {
+            toast({
+              title: "Resume Your Order",
+              description: "Your pending order is waiting. Click on Trading or Smallcases to continue.",
+              duration: 10000,
+            });
+          }
+        }}
         portfolioId={portfolioId}
         currentBalance={cashAvailable}
       />

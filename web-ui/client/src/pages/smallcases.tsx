@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { SmallcaseModificationModal } from "@/components/smallcases/SmallcaseModificationModal";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { TrendingUp, TrendingDown, Eye, Plus, Edit, ArrowUpRight, X } from "lucide-react";
+import { useBuyingPowerCheck } from "@/hooks/useBuyingPowerCheck";
+import { InsufficientFundsDialog } from "@/components/trading/insufficient-funds-dialog";
 
 type Smallcase = {
   id: string;
@@ -73,7 +75,7 @@ export default function SmallcasesPage() {
   const [isInvesting, setIsInvesting] = useState(false);
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [activeTab, setActiveTab] = useState<'available' | 'investments'>('available');
-  
+
   // Modification Modal State
   const [selectedInvestment, setSelectedInvestment] = useState<UserInvestment | null>(null);
   const [isModificationOpen, setIsModificationOpen] = useState(false);
@@ -82,8 +84,16 @@ export default function SmallcasesPage() {
   const [selectedInvestmentForClosure, setSelectedInvestmentForClosure] = useState<UserInvestment | null>(null);
   const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
   const [isClosingPosition, setIsClosingPosition] = useState(false);
-  
+
   const { toast } = useToast();
+
+  // Buying power validation
+  const {
+    checkBuyingPower,
+    showInsufficientDialog,
+    insufficientDetails,
+    closeInsufficientDialog,
+  } = useBuyingPowerCheck();
 
   // Fetch user's existing investments
   const { data: userInvestments = [], isLoading: isLoadingInvestments, refetch: refetchInvestments } = useQuery<UserInvestment[]>({
@@ -147,32 +157,47 @@ export default function SmallcasesPage() {
 
   const handleInvest = async () => {
     if (!selectedSmallcase) return;
-    
+
+    // Check buying power before investment
+    if (!checkBuyingPower(investmentAmount)) {
+      return; // Insufficient funds dialog will be shown automatically
+    }
+
     try {
       setIsInvesting(true);
       await apiRequest.post(`/smallcases/${selectedSmallcase.id}/invest`, {
         amount: investmentAmount,
         portfolio_id: "default-portfolio-id" // You might want to get this dynamically
       });
-      
+
       toast({
         title: "Investment Successful",
         description: `You've successfully invested ₹${investmentAmount.toLocaleString()} in ${selectedSmallcase.name}`,
       });
-      
+
       // Refresh investments data
       refetchInvestments();
-      
+
       // Switch to investments tab to show the new investment
       setActiveTab('investments');
     } catch (error: any) {
       console.error('Investment failed:', error);
       const errorMessage = error.response?.data?.detail || "Failed to process investment";
-      toast({
-        title: "Investment Failed",
-        description: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
-        variant: "destructive",
-      });
+
+      // Check if error is due to insufficient buying power
+      if (typeof errorMessage === 'string' && errorMessage.includes("Insufficient buying power")) {
+        toast({
+          title: "Insufficient Funds",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Investment Failed",
+          description: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsInvesting(false);
     }
@@ -651,6 +676,17 @@ export default function SmallcasesPage() {
         onClose={() => setIsModificationOpen(false)}
         onApplyRebalancing={handleApplyRebalancing}
       />
+
+      {/* Insufficient Funds Dialog */}
+      {insufficientDetails && (
+        <InsufficientFundsDialog
+          isOpen={showInsufficientDialog}
+          onClose={closeInsufficientDialog}
+          required={insufficientDetails.required}
+          available={insufficientDetails.available}
+          shortfall={insufficientDetails.shortfall}
+        />
+      )}
     </div>
   );
 }

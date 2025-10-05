@@ -189,7 +189,25 @@ async def invest_in_smallcase(
                 status_code=400,
                 detail=f"Minimum investment is ${minimum_investment}"
             )
-        
+
+        # Validate buying power - check if user has sufficient cash
+        cash_check = await db.execute(text("""
+            SELECT cash_balance FROM portfolios
+            WHERE id = :portfolio_id
+        """), {"portfolio_id": portfolio_id})
+
+        cash_row = cash_check.fetchone()
+        if not cash_row:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        cash_balance = Decimal(str(cash_row.cash_balance))
+
+        if cash_balance < investment_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient buying power. Required: ${investment_amount:,.2f}, Available: ${cash_balance:,.2f}"
+            )
+
         # Calculate NAV (simplified - using average of constituent prices)
         nav_result = await db.execute(text("""
             SELECT AVG(a.current_price * sc.weight_percentage / 100) as nav
@@ -399,6 +417,18 @@ async def invest_in_smallcase(
             except Exception as snapshot_update_error:
                 print(f"⚠️  Warning: Failed to update position snapshots with broker: {snapshot_update_error}")
                 logger.warning(f"Failed to update position snapshots with broker: {snapshot_update_error}")
+
+        # CRITICAL: Deduct investment amount from portfolio cash balance
+        await db.execute(text("""
+            UPDATE portfolios
+            SET cash_balance = cash_balance - :investment_amount,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :portfolio_id
+        """), {
+            "investment_amount": float(investment_amount),
+            "portfolio_id": portfolio_id
+        })
+        print(f"💰 Deducted ${investment_amount} from portfolio cash balance")
 
         await db.commit()
         

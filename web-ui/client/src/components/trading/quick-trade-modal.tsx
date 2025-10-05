@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useBuyingPowerCheck } from "@/hooks/useBuyingPowerCheck";
+import { InsufficientFundsDialog } from "./insufficient-funds-dialog";
 
 interface QuickTradeModalProps {
   isOpen: boolean;
@@ -23,6 +25,17 @@ export function QuickTradeModal({ isOpen, onClose }: QuickTradeModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const {
+    checkBuyingPower,
+    buyingPower,
+    showInsufficientDialog,
+    insufficientDetails,
+    closeInsufficientDialog,
+    savePendingOrder,
+    getPendingOrder,
+    clearPendingOrder,
+  } = useBuyingPowerCheck();
+
   const createTradeMutation = useMutation({
     mutationFn: async (tradeData: any) => {
       const response = await apiRequest(
@@ -38,20 +51,51 @@ export function QuickTradeModal({ isOpen, onClose }: QuickTradeModalProps) {
         description: "Your trade order has been placed successfully.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
+      clearPendingOrder(); // Clear any saved pending order
       handleClose();
     },
-    onError: () => {
-      toast({
-        title: "Trade Failed",
-        description: "Failed to place trade order. Please try again.",
-        variant: "destructive",
-      });
+    onError: (error: any) => {
+      // Check if error is due to insufficient buying power
+      const errorMessage = error?.message || "";
+      if (errorMessage.includes("Insufficient buying power")) {
+        toast({
+          title: "Insufficient Funds",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Trade Failed",
+          description: "Failed to place trade order. Please try again.",
+          variant: "destructive",
+        });
+      }
     },
   });
 
+  // Restore pending order on mount
+  useEffect(() => {
+    if (isOpen) {
+      const pending = getPendingOrder();
+      if (pending && pending.type === "quick_trade") {
+        const { symbol, side, orderType, quantity, price } = pending.data;
+        setSymbol(symbol);
+        setSide(side);
+        setOrderType(orderType);
+        setQuantity(quantity);
+        setPrice(price);
+
+        toast({
+          title: "Order Restored",
+          description: "Your pending order has been restored. Review and submit when ready.",
+        });
+      }
+    }
+  }, [isOpen]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!symbol || !quantity) {
       toast({
         title: "Invalid Input",
@@ -69,6 +113,22 @@ export function QuickTradeModal({ isOpen, onClose }: QuickTradeModalProps) {
       price: orderType === "MARKET" ? "0" : price,
     };
 
+    // For BUY orders, check buying power first
+    if (side === "BUY") {
+      const qty = parseFloat(quantity);
+      const unitPrice = orderType === "MARKET" ? 100 : parseFloat(price); // Estimate $100 for market orders
+      const estimatedTotal = qty * unitPrice;
+      const feeEstimate = estimatedTotal * 0.001; // 0.1% fee
+      const requiredAmount = estimatedTotal + feeEstimate;
+
+      // Check buying power
+      if (!checkBuyingPower(requiredAmount)) {
+        // Save pending order before showing insufficient funds dialog
+        savePendingOrder("quick_trade", tradeData, requiredAmount);
+        return;
+      }
+    }
+
     createTradeMutation.mutate(tradeData);
   };
 
@@ -82,11 +142,12 @@ export function QuickTradeModal({ isOpen, onClose }: QuickTradeModalProps) {
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] text-white max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-lg font-semibold">Quick Trade</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={handleClose}>
+        <DialogContent className="bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold">Quick Trade</DialogTitle>
+          </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -173,5 +234,16 @@ export function QuickTradeModal({ isOpen, onClose }: QuickTradeModalProps) {
         </form>
       </DialogContent>
     </Dialog>
+
+    {insufficientDetails && (
+      <InsufficientFundsDialog
+        isOpen={showInsufficientDialog}
+        onClose={closeInsufficientDialog}
+        required={insufficientDetails.required}
+        available={insufficientDetails.available}
+        shortfall={insufficientDetails.shortfall}
+      />
+    )}
+    </>
   );
 }

@@ -284,6 +284,44 @@ class SmallcaseClosureService:
                 investment.status = "partial"
                 # For partial closures, we might want to track cumulative closure data
 
+            # CRITICAL: Add proceeds back to portfolio cash balance
+            closure_value = Decimal(str(preview["closure_value"]))
+            await db.execute(text("""
+                UPDATE portfolios
+                SET cash_balance = cash_balance + :proceeds,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :portfolio_id
+            """), {
+                "proceeds": float(closure_value),
+                "portfolio_id": str(investment.portfolio_id)
+            })
+            logger.info(f"[Closure] Added ${closure_value} back to portfolio cash balance")
+
+            # Update portfolio holdings - reduce or remove holdings
+            for holding in preview["holdings_to_close"]:
+                await db.execute(text("""
+                    UPDATE portfolio_holdings
+                    SET quantity = quantity - :quantity_sold,
+                        current_value = current_value - :value_sold,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE portfolio_id = :portfolio_id
+                    AND asset_id = :asset_id
+                """), {
+                    "quantity_sold": holding["closure_quantity"],
+                    "value_sold": holding["estimated_proceeds"],
+                    "portfolio_id": str(investment.portfolio_id),
+                    "asset_id": holding["asset_id"]
+                })
+
+            # Delete holdings with zero or negative quantity
+            await db.execute(text("""
+                DELETE FROM portfolio_holdings
+                WHERE portfolio_id = :portfolio_id
+                AND quantity <= 0
+            """), {"portfolio_id": str(investment.portfolio_id)})
+
+            logger.info(f"[Closure] Updated portfolio holdings for {len(preview['holdings_to_close'])} assets")
+
             await db.commit()
 
             logger.info(

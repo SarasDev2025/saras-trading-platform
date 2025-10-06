@@ -15,12 +15,12 @@ export function PortfolioOverview() {
   const { tradingMode } = useTradingMode();
 
   const { data: portfolios, isLoading } = useQuery<Portfolio[]>({
-    queryKey: ["/api/portfolios", tradingMode],
+    queryKey: ["/api/portfolios"],
   });
 
   // Fetch cash balance separately for paper trading
   const { data: cashBalanceData, isLoading: isCashLoading } = useQuery({
-    queryKey: ["/api/portfolios/cash-balance", tradingMode],
+    queryKey: ["/api/portfolios/cash-balance"],
   });
 
   // Check for pending orders on mount and after funds are added

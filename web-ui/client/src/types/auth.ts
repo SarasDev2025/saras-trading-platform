@@ -11,6 +11,8 @@ export interface User {
     email_verified: boolean;
     kyc_status: string;
     account_status: string;
+    region: string;
+    trading_mode: 'paper' | 'live';
     created_at: string;
   }
   

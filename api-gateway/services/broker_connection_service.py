@@ -5,7 +5,7 @@ import uuid
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from brokers import BaseBroker, BrokerFactory, BrokerType, broker_manager
@@ -126,3 +126,41 @@ class BrokerConnectionService:
             )
 
         return connection
+
+    @staticmethod
+    async def get_connection_for_user_trading_mode(
+        db: AsyncSession,
+        user_id: uuid.UUID | str
+    ) -> Optional[UserBrokerConnection]:
+        """
+        Get active broker connection matching user's current trading mode.
+        Returns connection where paper_trading flag matches user's trading_mode.
+        """
+        user_uuid = BrokerConnectionService._normalize_uuid(user_id)
+
+        # Get user's current trading mode
+        user_result = await db.execute(
+            text("SELECT trading_mode FROM users WHERE id = :user_id"),
+            {"user_id": str(user_uuid)}
+        )
+        user_mode = user_result.scalar_one_or_none()
+
+        if not user_mode:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Determine required paper_trading flag based on user's mode
+        requires_paper = (user_mode == 'paper')
+
+        # Get matching broker connection
+        result = await db.execute(
+            select(UserBrokerConnection).where(
+                UserBrokerConnection.user_id == user_uuid,
+                UserBrokerConnection.paper_trading == requires_paper,
+                UserBrokerConnection.status == 'active'
+            ).limit(1)
+        )
+
+        return result.scalar_one_or_none()

@@ -22,11 +22,16 @@ import {
   DollarSign,
   TrendingUp
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useTheme } from "@/hooks/use-theme";
+import { useTradingMode } from "@/contexts/TradingModeContext";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
+  const { tradingMode, switchMode, isSwitching } = useTradingMode();
+  const { user } = useAuth();
+
   const [notifications, setNotifications] = useState({
     trades: true,
     priceAlerts: true,
@@ -34,14 +39,38 @@ export default function Settings() {
     news: true,
   });
 
+  // Determine default broker based on user region
+  const defaultBroker = useMemo(() => {
+    if (!user?.region) return "alpaca";
+    switch (user.region) {
+      case "IN":
+        return "zerodha";
+      case "US":
+        return "alpaca";
+      case "GB":
+        return "interactive_brokers";
+      default:
+        return "alpaca";
+    }
+  }, [user?.region]);
+
   const [tradingSettings, setTradingSettings] = useState({
     maxPositionSize: "10000",
     stopLossDefault: "5",
     takeProfitDefault: "10",
     riskPerTrade: "2",
-    executionMode: "paper", // paper or live
-    brokerType: "alpaca", // alpaca or zerodha
+    brokerType: "alpaca",
   });
+
+  // Update broker type when user data loads
+  useEffect(() => {
+    if (defaultBroker) {
+      setTradingSettings(prev => ({
+        ...prev,
+        brokerType: defaultBroker
+      }));
+    }
+  }, [defaultBroker]);
 
   // Admin user check (you may want to get this from auth context)
   const [isAdmin, setIsAdmin] = useState(false);
@@ -116,16 +145,28 @@ export default function Settings() {
                     <div>
                       <Label className="text-sm font-medium text-gray-400">Full Name</Label>
                       <Input
-                        defaultValue="John Doe"
+                        key={`name-${user?.id}`}
+                        defaultValue={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : ''}
+                        placeholder="Enter your full name"
                         className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white"
                       />
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-gray-400">Email</Label>
                       <Input
-                        defaultValue="john.doe@example.com"
+                        key={`email-${user?.id}`}
+                        defaultValue={user?.email || ''}
                         type="email"
+                        placeholder="Enter your email"
                         className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-gray-400">Region</Label>
+                      <Input
+                        value={user?.region || 'IN'}
+                        disabled
+                        className="mt-2 bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-gray-400"
                       />
                     </div>
                     <div>
@@ -278,8 +319,9 @@ export default function Settings() {
                     <div className="space-y-3">
                       <Label className="text-sm font-medium text-gray-400">Execution Mode</Label>
                       <Select
-                        value={tradingSettings.executionMode}
-                        onValueChange={(value) => setTradingSettings({...tradingSettings, executionMode: value})}
+                        value={tradingMode}
+                        onValueChange={(value: 'paper' | 'live') => switchMode(value)}
+                        disabled={isSwitching}
                       >
                         <SelectTrigger className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white">
                           <SelectValue />
@@ -305,7 +347,7 @@ export default function Settings() {
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      {tradingSettings.executionMode === "live" && (
+                      {tradingMode === "live" && (
                         <div className="p-3 bg-[var(--warning-yellow)] bg-opacity-10 border border-[var(--warning-yellow)] rounded-lg">
                           <div className="flex items-center space-x-2">
                             <AlertTriangle className="w-4 h-4 warning-text flex-shrink-0" />
@@ -313,6 +355,11 @@ export default function Settings() {
                               <strong>Live Trading:</strong> Real money at risk. Ensure sufficient funds in broker account.
                             </div>
                           </div>
+                        </div>
+                      )}
+                      {isSwitching && (
+                        <div className="text-xs text-gray-400 flex items-center space-x-2">
+                          <span className="animate-pulse">Switching trading mode...</span>
                         </div>
                       )}
                     </div>
@@ -352,7 +399,7 @@ export default function Settings() {
                       <div className="p-3 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg">
                         <div className="text-xs text-gray-400 mb-1">Auto-mapped API Endpoint:</div>
                         <div className="text-sm text-white font-mono">
-                          {getBrokerUrls(tradingSettings.brokerType, tradingSettings.executionMode)}
+                          {getBrokerUrls(tradingSettings.brokerType, tradingMode)}
                         </div>
                       </div>
                     </div>

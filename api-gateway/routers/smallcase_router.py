@@ -255,6 +255,13 @@ async def invest_in_smallcase(
         constituents = constituents_result.fetchall()
         print(f"📊 Found {len(constituents)} constituents for smallcase")
 
+        # Validate that smallcase has constituents
+        if len(constituents) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot invest in {smallcase_row.name}. This smallcase has no constituents configured. Please contact support."
+            )
+
         # Enhanced: Add broker selection BEFORE creating holdings
         try:
             print(f"🚀 Starting broker selection for user {user_id} with investment ${investment_amount}")

@@ -47,6 +47,8 @@ def user_to_dict(user_row) -> dict:
         "email_verified": user_row.email_verified,
         "kyc_status": user_row.kyc_status,
         "account_status": user_row.account_status,
+        "region": user_row.region,
+        "trading_mode": user_row.trading_mode,
         "created_at": user_row.created_at
     }
 
@@ -60,7 +62,8 @@ class UserCreate(BaseModel):
     password: str
     first_name: str
     last_name: str
-    
+    region: str = 'IN'  # Default to India
+
     @field_validator('username')
     @classmethod
     def username_alphanumeric(cls, v):
@@ -71,7 +74,7 @@ class UserCreate(BaseModel):
         if len(v) > 30:
             raise ValueError('Username must be less than 30 characters')
         return v.lower()
-    
+
     @field_validator('password')
     @classmethod
     def validate_password(cls, v):
@@ -85,13 +88,22 @@ class UserCreate(BaseModel):
             raise ValueError('Password must contain at least one digit')
         return v
 
+    @field_validator('region')
+    @classmethod
+    def validate_region(cls, v):
+        valid_regions = ['IN', 'US', 'GB']
+        v_upper = v.upper()
+        if v_upper not in valid_regions:
+            raise ValueError(f'Region must be one of: {", ".join(valid_regions)}')
+        return v_upper
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     email: str
     username: str
@@ -100,6 +112,8 @@ class UserResponse(BaseModel):
     email_verified: bool
     kyc_status: str
     account_status: str
+    region: str
+    trading_mode: str
     created_at: datetime
 
 class TokenResponse(BaseModel):
@@ -521,6 +535,8 @@ async def register(
                 email_verified=user.email_verified,
                 kyc_status=user.kyc_status,
                 account_status=user.account_status,
+                region=user.region,
+                trading_mode=user.trading_mode,
                 created_at=user.created_at
             )
         )

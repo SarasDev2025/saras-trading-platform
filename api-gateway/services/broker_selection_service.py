@@ -68,10 +68,9 @@ class BrokerSelectionService:
 
             existing_broker = broker_result.fetchone()
 
-            # Get user location information (if available)
-            # For now, we'll use a simple approach and enhance later
+            # Get user region from database
             user_result = await db.execute(text("""
-                SELECT email, created_at
+                SELECT region
                 FROM users
                 WHERE id = :user_id
             """), {"user_id": user_id})
@@ -80,13 +79,12 @@ class BrokerSelectionService:
             if not user_row:
                 raise ValueError(f"User {user_id} not found")
 
-            # Determine user's likely region based on email domain (simplified)
-            user_email = user_row[0]
-            detected_region = BrokerSelectionService._detect_region_from_email(user_email)
+            # Use user's explicitly set region
+            user_region = user_row[0] if user_row[0] else 'IN'  # Default to India if not set
 
             return {
                 "user_id": user_id,
-                "detected_region": detected_region,
+                "detected_region": user_region,
                 "existing_broker": {
                     "broker_type": existing_broker[0] if existing_broker else None,
                     "status": existing_broker[1] if existing_broker else None,
@@ -94,7 +92,7 @@ class BrokerSelectionService:
                     "is_active": existing_broker[1] == 'active' if existing_broker else False
                 } if existing_broker else None,
                 "regional_config": BrokerSelectionService.REGIONAL_BROKERS.get(
-                    detected_region,
+                    user_region,
                     BrokerSelectionService.REGIONAL_BROKERS["DEFAULT"]
                 )
             }
@@ -109,34 +107,12 @@ class BrokerSelectionService:
                 "regional_config": BrokerSelectionService.REGIONAL_BROKERS["DEFAULT"]
             }
 
-    @staticmethod
-    def _detect_region_from_email(email: str) -> str:
-        """Detect user's region based on email domain (simplified approach)"""
-        email_lower = email.lower()
-
-        # Common Indian email domains and patterns
-        indian_domains = ['.in', 'rediffmail', 'yahoo.in', 'gmail.com']
-        indian_keywords = ['india', 'mumbai', 'delhi', 'bangalore', 'hyderabad', 'chennai']
-
-        # Common US domains
-        us_domains = ['.com', '.org', '.net', 'yahoo.com', 'hotmail.com', 'outlook.com']
-
-        # Common UK domains
-        uk_domains = ['.uk', '.co.uk', 'btinternet.com']
-
-        # Check for explicit Indian indicators
-        if any(domain in email_lower for domain in indian_domains):
-            return "IN"
-
-        if any(keyword in email_lower for keyword in indian_keywords):
-            return "IN"
-
-        # Check for UK indicators
-        if any(domain in email_lower for domain in uk_domains):
-            return "GB"
-
-        # Default to US for .com domains and others
-        return "US"
+    # Email-based region detection is deprecated - now using explicit user.region field
+    # @staticmethod
+    # def _detect_region_from_email(email: str) -> str:
+    #     """DEPRECATED: Detect user's region based on email domain (simplified approach)"""
+    #     # This function is no longer used as users now have an explicit region field
+    #     pass
 
     @staticmethod
     async def select_optimal_broker(

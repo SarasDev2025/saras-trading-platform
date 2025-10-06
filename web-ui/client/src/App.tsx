@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { TradingModeProvider } from "@/contexts/TradingModeContext";
 import { ProtectedRoute, PublicRoute } from "@/components/auth";
 
 // Existing pages
@@ -106,10 +107,12 @@ function App() {
       <ThemeProvider>
         <TooltipProvider>
           <AuthProvider>
-            <div className="trading-platform">
-              <Toaster />
-              <Router />
-            </div>
+            <TradingModeProvider>
+              <div className="trading-platform">
+                <Toaster />
+                <Router />
+              </div>
+            </TradingModeProvider>
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

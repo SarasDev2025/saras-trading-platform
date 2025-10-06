@@ -108,6 +108,8 @@ class User(Base):
     phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     kyc_status: Mapped[KYCStatus] = mapped_column(String(20), default=KYCStatus.PENDING)
     account_status: Mapped[AccountStatus] = mapped_column(String(20), default=AccountStatus.ACTIVE)
+    region: Mapped[str] = mapped_column(String(5), default='IN', nullable=False)
+    trading_mode: Mapped[str] = mapped_column(String(10), default='paper', nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -125,6 +127,8 @@ class User(Base):
     __table_args__ = (
         CheckConstraint("kyc_status IN ('pending', 'approved', 'rejected')", name='check_kyc_status'),
         CheckConstraint("account_status IN ('active', 'suspended', 'closed')", name='check_account_status'),
+        CheckConstraint("region IN ('IN', 'US', 'GB')", name='check_region'),
+        CheckConstraint("trading_mode IN ('paper', 'live')", name='check_trading_mode'),
     )
 
     @hybrid_property
@@ -149,8 +153,14 @@ class Portfolio(Base):
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=Decimal('0.00'))
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     is_default: Mapped[bool] = mapped_column(Boolean, default=True)
+    trading_mode: Mapped[str] = mapped_column(String(10), default='paper', nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())
+
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("trading_mode IN ('paper', 'live')", name='check_portfolio_trading_mode'),
+    )
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="portfolios")

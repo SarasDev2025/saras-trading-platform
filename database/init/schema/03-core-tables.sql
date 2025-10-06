@@ -126,8 +126,10 @@ CREATE TABLE public.portfolios (
     cash_balance numeric(15,2) DEFAULT 0.00,
     currency character varying(3) DEFAULT 'USD'::character varying,
     is_default boolean DEFAULT true,
+    trading_mode character varying(10) DEFAULT 'paper'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT portfolios_trading_mode_check CHECK (((trading_mode)::text = ANY ((ARRAY['paper'::character varying, 'live'::character varying])::text[])))
 );
 
 

@@ -76,16 +76,23 @@ async def get_portfolios(
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all portfolios for the current user"""
+    """Get all portfolios for the current user in their current trading mode"""
     try:
         user_id = current_user["id"]
-        
-        result = await db.execute(text("""
-            SELECT p.id, p.name, p.description, p.currency, p.total_value, p.cash_balance
-            FROM portfolios p 
-            WHERE p.user_id = :user_id
-            ORDER BY p.created_at
+
+        # Get user's current trading mode
+        user_result = await db.execute(text("""
+            SELECT trading_mode FROM users WHERE id = :user_id
         """), {"user_id": user_id})
+        user_mode = user_result.scalar_one()
+
+        # Filter portfolios by trading mode
+        result = await db.execute(text("""
+            SELECT p.id, p.name, p.description, p.currency, p.total_value, p.cash_balance, p.trading_mode
+            FROM portfolios p
+            WHERE p.user_id = :user_id AND p.trading_mode = :trading_mode
+            ORDER BY p.created_at
+        """), {"user_id": user_id, "trading_mode": user_mode})
         
         portfolios = []
         for row in result:
@@ -147,7 +154,7 @@ async def get_cash_balance(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get current cash balance for user's default portfolio
+    Get current cash balance for user's default portfolio in current trading mode
 
     **Returns:**
     Cash balance and buying power
@@ -155,15 +162,21 @@ async def get_cash_balance(
     try:
         user_id = current_user["id"]
 
-        # Get default portfolio
+        # Get user's current trading mode
+        user_result = await db.execute(text("""
+            SELECT trading_mode FROM users WHERE id = :user_id
+        """), {"user_id": user_id})
+        user_mode = user_result.scalar_one()
+
+        # Get default portfolio in current trading mode
         result = await db.execute(
             text("""
                 SELECT id, cash_balance, total_value
                 FROM portfolios
-                WHERE user_id = :user_id AND is_default = true
+                WHERE user_id = :user_id AND trading_mode = :trading_mode AND is_default = true
                 LIMIT 1
             """),
-            {"user_id": user_id}
+            {"user_id": user_id, "trading_mode": user_mode}
         )
 
         portfolio = result.fetchone()

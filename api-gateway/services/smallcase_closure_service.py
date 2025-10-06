@@ -160,10 +160,23 @@ class SmallcaseClosureService:
         )
 
         if not holdings:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No holdings found for this smallcase investment. This may indicate an issue with the investment creation process."
+            # For investments with no holdings (bad data), allow closure with zero value
+            logger.warning(
+                f"[Closure] Investment {investment_id} has no holdings. "
+                f"This may be from a smallcase with no constituents. Allowing zero-value closure."
             )
+            return {
+                "investment_id": str(investment.id),
+                "smallcase_id": str(investment.smallcase_id),
+                "smallcase_name": investment.smallcase.name,
+                "current_value": float(investment.current_value or 0),
+                "investment_amount": float(investment.investment_amount),
+                "estimated_pnl": float((investment.current_value or 0) - investment.investment_amount),
+                "closure_percentage": closure_percentage,
+                "closure_value": 0.0,  # No holdings = no value
+                "holdings_to_close": [],
+                "note": "This investment has no holdings. Closure will return no cash."
+            }
 
         # Calculate closure values
         total_current_value = sum(h["current_value"] for h in holdings)

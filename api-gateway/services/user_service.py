@@ -37,24 +37,38 @@ class UserService:
                 first_name=user_data.get('first_name'),
                 last_name=user_data.get('last_name'),
                 phone=user_data.get('phone'),
-                date_of_birth=user_data.get('date_of_birth')
+                date_of_birth=user_data.get('date_of_birth'),
+                region=user_data.get('region', 'IN')  # Default to India
             )
             
             session.add(user)
             await session.flush()  # Get the user ID
-            
-            # Create default portfolio with virtual money for paper trading
-            default_portfolio = Portfolio(
+
+            # Create default PAPER trading portfolio with virtual money
+            paper_portfolio = Portfolio(
                 user_id=user.id,
-                name="Default Portfolio",
+                name="Paper Trading Portfolio",
                 cash_balance=100000.00,  # $100k virtual money for paper trading
-                total_value=100000.00
+                total_value=100000.00,
+                trading_mode='paper',
+                is_default=True
             )
-            
-            session.add(default_portfolio)
+            session.add(paper_portfolio)
+
+            # Create default LIVE trading portfolio (empty, needs funding)
+            live_portfolio = Portfolio(
+                user_id=user.id,
+                name="Live Trading Portfolio",
+                cash_balance=0.00,  # User needs to add real funds
+                total_value=0.00,
+                trading_mode='live',
+                is_default=True  # Both are default for their respective modes
+            )
+            session.add(live_portfolio)
+
             await session.commit()
             await session.refresh(user)
-            
+
             return user
 
     @staticmethod

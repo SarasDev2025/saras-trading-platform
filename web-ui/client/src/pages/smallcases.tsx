@@ -1,7 +1,7 @@
 // src/pages/smallcases.tsx
 
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -86,10 +86,12 @@ export default function SmallcasesPage() {
   const [isClosingPosition, setIsClosingPosition] = useState(false);
 
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Buying power validation
   const {
     checkBuyingPower,
+    refetchBuyingPower,
     showInsufficientDialog,
     insufficientDetails,
     closeInsufficientDialog,
@@ -175,8 +177,13 @@ export default function SmallcasesPage() {
         description: `You've successfully invested ₹${investmentAmount.toLocaleString()} in ${selectedSmallcase.name}`,
       });
 
-      // Refresh investments data
+      // Refresh investments data and buying power
       refetchInvestments();
+      refetchBuyingPower(); // Force refresh cash balance
+
+      // Invalidate all portfolio-related queries to update dashboard
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios/cash-balance"] });
 
       // Switch to investments tab to show the new investment
       setActiveTab('investments');
@@ -257,8 +264,13 @@ export default function SmallcasesPage() {
         description: `Your ${selectedInvestmentForClosure.smallcase.name} position has been closed.`,
       });
 
-      // Refresh investments data
+      // Refresh investments data and cash balance
       refetchInvestments();
+      refetchBuyingPower();
+
+      // Invalidate all portfolio-related queries to update dashboard
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios/cash-balance"] });
 
       // Close modal
       setIsClosureModalOpen(false);

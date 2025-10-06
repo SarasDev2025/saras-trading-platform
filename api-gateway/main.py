@@ -18,7 +18,7 @@ from sqlalchemy import text  # Add this line
 from config.database import Base, get_db
 from routers import (
     auth_router, portfolio_router, alpaca_router, info_router,
-    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router, settings_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -411,6 +411,7 @@ async def websocket_endpoint(
 
 # Include routers with enhanced dependencies and proper organization
 app.include_router(auth_router.router, tags=["Authentication"])
+app.include_router(settings_router.router, prefix="/api/v1", tags=["User Settings"])
 app.include_router(broker_router.router, prefix="/brokers", tags=["Broker Management"])
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])

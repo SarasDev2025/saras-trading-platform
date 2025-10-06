@@ -7,18 +7,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { AddFundsModal } from "./add-funds-modal";
 import { useToast } from "@/hooks/use-toast";
+import { useTradingMode } from "@/contexts/TradingModeContext";
 
 export function PortfolioOverview() {
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
   const { toast } = useToast();
+  const { tradingMode } = useTradingMode();
 
   const { data: portfolios, isLoading } = useQuery<Portfolio[]>({
-    queryKey: ["/api/portfolios"],
+    queryKey: ["/api/portfolios", tradingMode],
   });
 
   // Fetch cash balance separately for paper trading
   const { data: cashBalanceData, isLoading: isCashLoading } = useQuery({
-    queryKey: ["/api/portfolios/cash-balance"],
+    queryKey: ["/api/portfolios/cash-balance", tradingMode],
   });
 
   // Check for pending orders on mount and after funds are added

@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export const RegisterForm: React.FC = () => {
@@ -23,7 +24,8 @@ export const RegisterForm: React.FC = () => {
     password: '',
     confirmPassword: '',
     first_name: '',
-    last_name: ''
+    last_name: '',
+    region: 'IN'  // Default to India
   });
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -200,7 +202,43 @@ export const RegisterForm: React.FC = () => {
                 disabled={isLoading}
               />
             </div>
-            
+
+            <div className="space-y-2">
+              <Label htmlFor="region">Trading Region</Label>
+              <Select
+                value={formData.region}
+                onValueChange={(value) => setFormData({ ...formData, region: value })}
+                disabled={isLoading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select your trading region" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="IN">
+                    <div className="flex flex-col">
+                      <span className="font-medium">India (IN)</span>
+                      <span className="text-xs text-gray-500">Trade via Zerodha • NSE, BSE</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="US">
+                    <div className="flex flex-col">
+                      <span className="font-medium">United States (US)</span>
+                      <span className="text-xs text-gray-500">Trade via Alpaca • NASDAQ, NYSE</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="GB">
+                    <div className="flex flex-col">
+                      <span className="font-medium">United Kingdom (GB)</span>
+                      <span className="text-xs text-gray-500">Trade via Interactive Brokers • LSE</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                This determines which broker and exchanges you'll use for trading
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <div className="relative">

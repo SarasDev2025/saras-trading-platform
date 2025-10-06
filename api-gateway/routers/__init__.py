@@ -10,5 +10,6 @@ from . import (
     broker_router,
     dividend_router,
     dividend_scheduler_router,
-    gtt_router
+    gtt_router,
+    settings_router
 )

@@ -26,6 +26,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useTheme } from "@/hooks/use-theme";
 import { useTradingMode } from "@/contexts/TradingModeContext";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
@@ -39,56 +40,21 @@ export default function Settings() {
     news: true,
   });
 
-  // Determine default broker based on user region
-  const defaultBroker = useMemo(() => {
-    if (!user?.region) return "alpaca";
-    switch (user.region) {
-      case "IN":
-        return "zerodha";
-      case "US":
-        return "alpaca";
-      case "GB":
-        return "interactive_brokers";
-      default:
-        return "alpaca";
-    }
-  }, [user?.region]);
+  // Fetch broker configuration from database based on user's region and trading mode
+  const { data: brokerConfig, isLoading: isBrokerLoading } = useQuery({
+    queryKey: ["/api/v1/broker-config/current"],
+    enabled: !!user, // Only fetch when user is loaded
+  });
 
   const [tradingSettings, setTradingSettings] = useState({
     maxPositionSize: "10000",
     stopLossDefault: "5",
     takeProfitDefault: "10",
     riskPerTrade: "2",
-    brokerType: "alpaca",
   });
-
-  // Update broker type when user data loads
-  useEffect(() => {
-    if (defaultBroker) {
-      setTradingSettings(prev => ({
-        ...prev,
-        brokerType: defaultBroker
-      }));
-    }
-  }, [defaultBroker]);
 
   // Admin user check (you may want to get this from auth context)
   const [isAdmin, setIsAdmin] = useState(false);
-
-  // Auto-mapped URLs based on broker and execution mode
-  const getBrokerUrls = (brokerType: string, executionMode: string) => {
-    const urls = {
-      alpaca: {
-        paper: "https://paper-api.alpaca.markets",
-        live: "https://api.alpaca.markets"
-      },
-      zerodha: {
-        paper: "https://api.kite.trade", // Zerodha doesn't have separate paper trading URL
-        live: "https://api.kite.trade"
-      }
-    };
-    return urls[brokerType]?.[executionMode] || "";
-  };
 
   return (
     <div className="min-h-screen flex">
@@ -366,42 +332,43 @@ export default function Settings() {
                     <Separator className="bg-[var(--carbon-gray-80)]" />
 
                     <div className="space-y-3">
-                      <Label className="text-sm font-medium text-gray-400">Broker Selection</Label>
-                      <Select
-                        value={tradingSettings.brokerType}
-                        onValueChange={(value) => setTradingSettings({...tradingSettings, brokerType: value})}
-                      >
-                        <SelectTrigger className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)]">
-                          <SelectItem value="alpaca" className="text-white">
-                            <div className="flex items-center space-x-2">
-                              <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
-                              <div>
-                                <div className="font-medium">Alpaca Trading</div>
-                                <div className="text-xs text-gray-400">US Markets • Stocks, ETFs, Crypto</div>
-                              </div>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="zerodha" className="text-white">
-                            <div className="flex items-center space-x-2">
-                              <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
-                              <div>
-                                <div className="font-medium">Zerodha Kite</div>
-                                <div className="text-xs text-gray-400">India Markets • Stocks, ETFs, Mutual Funds</div>
-                              </div>
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-
-                      <div className="p-3 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg">
-                        <div className="text-xs text-gray-400 mb-1">Auto-mapped API Endpoint:</div>
-                        <div className="text-sm text-white font-mono">
-                          {getBrokerUrls(tradingSettings.brokerType, tradingMode)}
-                        </div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium text-gray-400">Broker Configuration</Label>
+                        <span className="text-xs text-gray-500">
+                          Region: {user?.region || 'Loading...'} • Mode: {tradingMode}
+                        </span>
                       </div>
+
+                      {isBrokerLoading ? (
+                        <div className="p-4 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg">
+                          <div className="text-sm text-gray-400">Loading broker configuration...</div>
+                        </div>
+                      ) : brokerConfig ? (
+                        <div className="p-4 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg space-y-3">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-3 h-3 rounded-full ${
+                              brokerConfig.broker_name === 'zerodha' ? 'bg-orange-500' :
+                              brokerConfig.broker_name === 'alpaca' ? 'bg-blue-500' :
+                              'bg-purple-500'
+                            }`}></div>
+                            <div>
+                              <div className="font-medium text-white">{brokerConfig.display_name}</div>
+                              <div className="text-xs text-gray-400">{brokerConfig.description}</div>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t border-[var(--carbon-gray-80)]">
+                            <div className="text-xs text-gray-400 mb-1">API Endpoint:</div>
+                            <div className="text-sm text-white font-mono break-all">{brokerConfig.api_url}</div>
+                          </div>
+                          <div className="text-xs text-gray-500 italic">
+                            ✓ Auto-configured based on your region and trading mode
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-[var(--carbon-gray-90)] border border-[var(--carbon-gray-80)] rounded-lg">
+                          <div className="text-sm text-gray-400">No broker configuration found</div>
+                        </div>
+                      )}
                     </div>
                     <Separator className="bg-[var(--carbon-gray-80)]" />
 

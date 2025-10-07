@@ -1,15 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authAPI, userAPI } from '../lib/api';
+import { authAPI, userAPI, api } from '../lib/api';
 
 // Auth state management
 export const useAuth = () => {
   const queryClient = useQueryClient();
-  
+
+  // Use /auth/me instead of /users/profile
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['user'],
-    queryFn: () => userAPI.getProfile(),
+    queryFn: async () => {
+      const response = await api.get('/auth/me');
+      return response.data;
+    },
     retry: false,
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: !!localStorage.getItem('access_token'), // Only fetch if token exists
   });
 
   const loginMutation = useMutation({

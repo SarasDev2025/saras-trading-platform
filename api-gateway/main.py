@@ -413,7 +413,7 @@ async def websocket_endpoint(
 app.include_router(auth_router.router, tags=["Authentication"])
 app.include_router(settings_router.router, prefix="/api/v1", tags=["User Settings"])
 app.include_router(broker_router.router, prefix="/brokers", tags=["Broker Management"])
-app.include_router(broker_config_router.router, prefix="/api/v1", tags=["Broker Configuration"])
+app.include_router(broker_config_router.router, prefix="/v1", tags=["Broker Configuration"])
 app.include_router(portfolio_router.router, prefix="/portfolios", tags=["Portfolio"])
 app.include_router(smallcase_router.router, prefix="/smallcases", tags=["Smallcases"])
 app.include_router(dividend_router.router, tags=["Dividend Management"])

@@ -136,10 +136,16 @@ class SmallcaseExecutionService:
                 )
 
             use_broker = False
-            broker_is_paper = False
-            if broker_connection:
-                broker_is_paper = broker_connection.paper_trading
-                use_broker = execution_mode == ExecutionMode.LIVE or broker_is_paper
+
+            if execution_mode == ExecutionMode.PAPER:
+                # Paper mode: Alpaca uses paper API, Zerodha uses simulation
+                if broker_connection and broker_connection.broker_type == 'alpaca':
+                    use_broker = True  # Use Alpaca paper API
+                else:
+                    use_broker = False  # Pure simulation for Zerodha
+            elif execution_mode == ExecutionMode.LIVE:
+                # Live mode: Always use broker API
+                use_broker = True
 
             composition = await RebalancingDBService.get_smallcase_composition(db, smallcase_uuid)
             logger.info(
@@ -211,7 +217,7 @@ class SmallcaseExecutionService:
                         broker_connection=broker_connection,
                         stock_lookup=stock_lookup,
                         rebalance_summary=rebalance_summary,
-                        connection_is_paper=broker_is_paper
+                        connection_is_paper=(execution_mode == ExecutionMode.PAPER)
                     )
                     run.summary = SmallcaseExecutionService._serialize_for_json(summary)
                     logger.info(

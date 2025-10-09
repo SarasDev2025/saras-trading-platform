@@ -471,6 +471,12 @@ async def get_user_smallcases(
     try:
         user_id = str(current_user["id"])
 
+        # If no region specified, use user's region
+        if not region:
+            logger.info(f"Current user data: {current_user}")
+            region = current_user.get("region", "IN")
+            logger.info(f"Auto-filtering smallcases by user region: {region}")
+
         # Build dynamic WHERE clause for regional filtering
         where_conditions = ["s.is_active = true"]
         params = {"user_id": user_id}

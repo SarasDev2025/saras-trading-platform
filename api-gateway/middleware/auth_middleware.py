@@ -394,12 +394,12 @@ class EnhancedTokenService:
         """Get user info with security status checks"""
         try:
             result = await db.execute(text("""
-                SELECT 
+                SELECT
                     id, email, username, first_name, last_name,
-                    account_status, email_verified, 
+                    account_status, email_verified,
                     locked_until, failed_login_attempts,
-                    last_login, created_at
-                FROM users 
+                    last_login, created_at, region, trading_mode
+                FROM users
                 WHERE id = :user_id
             """), {"user_id": user_id})
             
@@ -434,7 +434,9 @@ class EnhancedTokenService:
                 "last_name": user_row.last_name,
                 "account_status": user_row.account_status,
                 "email_verified": user_row.email_verified,
-                "last_login": user_row.last_login
+                "last_login": user_row.last_login,
+                "region": user_row.region,
+                "trading_mode": user_row.trading_mode
             }
             
         except HTTPException:

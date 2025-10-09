@@ -1,7 +1,9 @@
 """Service utilities for managing user broker connections and runtime sessions."""
 from __future__ import annotations
 
+import os
 import uuid
+import logging
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -10,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from brokers import BaseBroker, BrokerFactory, BrokerType, broker_manager
 from models import UserBrokerConnection
+
+logger = logging.getLogger(__name__)
 
 
 class BrokerConnectionService:
@@ -59,11 +63,37 @@ class BrokerConnectionService:
 
     @staticmethod
     def _extract_credentials(connection: UserBrokerConnection) -> Tuple[Optional[str], Optional[str]]:
+        """Extract credentials from connection or fallback to environment variables."""
+        # Try database credentials first
         if connection.api_key and connection.api_secret:
+            logger.info(f"Using database credentials for {connection.broker_type}")
             return connection.api_key, connection.api_secret
 
         credentials = connection.credentials or {}
-        return credentials.get("api_key"), credentials.get("api_secret")
+        db_key = credentials.get("api_key")
+        db_secret = credentials.get("api_secret")
+
+        if db_key and db_secret:
+            logger.info(f"Using credentials from JSONB for {connection.broker_type}")
+            return db_key, db_secret
+
+        # Fallback to environment variables (development mode)
+        broker_type = connection.broker_type.upper()
+        mode_suffix = "" if connection.paper_trading else "_LIVE"
+
+        env_key_name = f"{broker_type}_API_KEY{mode_suffix}"
+        env_secret_name = f"{broker_type}_SECRET_KEY{mode_suffix}"
+
+        env_key = os.getenv(env_key_name)
+        env_secret = os.getenv(env_secret_name)
+
+        if env_key and env_secret:
+            logger.info(f"Using environment credentials for {connection.broker_type} (paper={connection.paper_trading})")
+            logger.info(f"Loaded from env: {env_key_name}, {env_secret_name}")
+            return env_key, env_secret
+
+        logger.warning(f"No credentials found for {connection.broker_type} (paper={connection.paper_trading})")
+        return None, None
 
     @staticmethod
     async def ensure_broker_session(

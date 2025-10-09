@@ -31,6 +31,8 @@ type Smallcase = {
   minimumInvestment: number;
   estimatedNAV: number;
   isActive: boolean;
+  region: string;
+  currency: string;
 };
 
 type SmallcaseDetails = Smallcase & {
@@ -45,6 +47,11 @@ type SmallcaseDetails = Smallcase & {
     exchange: string;
     value: number;
   }>;
+};
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currency: string): string => {
+  return currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency;
 };
 
 type UserInvestment = {
@@ -475,7 +482,7 @@ export default function SmallcasesPage() {
                           </div>
                           <div className="flex justify-between items-center mt-2">
                             <span className="text-sm text-muted-foreground">Min Investment</span>
-                            <span className="font-medium">₹{smallcase.minimumInvestment.toLocaleString()}</span>
+                            <span className="font-medium">{getCurrencySymbol(smallcase.currency)}{smallcase.minimumInvestment.toLocaleString()}</span>
                           </div>
                         </CardHeader>
                       </Card>
@@ -497,10 +504,10 @@ export default function SmallcasesPage() {
                           </div>
                           <div className="text-right">
                             <div className="text-2xl font-bold">
-                              ₹{selectedSmallcase.estimatedNAV.toLocaleString()}
+                              {getCurrencySymbol(selectedSmallcase.currency)}{selectedSmallcase.estimatedNAV.toLocaleString()}
                             </div>
                             <div className="text-sm text-muted-foreground">
-                              Min. ₹{selectedSmallcase.minimumInvestment.toLocaleString()}
+                              Min. {getCurrencySymbol(selectedSmallcase.currency)}{selectedSmallcase.minimumInvestment.toLocaleString()}
                             </div>
                           </div>
                         </div>
@@ -595,7 +602,7 @@ export default function SmallcasesPage() {
                               className="text-lg font-medium"
                             />
                             <p className="text-sm text-muted-foreground">
-                              Minimum investment: ₹{selectedSmallcase.minimumInvestment.toLocaleString()}
+                              Minimum investment: {getCurrencySymbol(selectedSmallcase.currency)}{selectedSmallcase.minimumInvestment.toLocaleString()}
                             </p>
                           </div>
                           

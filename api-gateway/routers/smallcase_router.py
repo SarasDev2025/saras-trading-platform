@@ -621,7 +621,7 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
     try:
         # Get smallcase basic info
         result = await db.execute(text("""
-            SELECT 
+            SELECT
                 s.id,
                 s.name,
                 s.description,
@@ -631,18 +631,20 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
                 s.expected_return_min,
                 s.expected_return_max,
                 s.minimum_investment,
-                s.is_active
+                s.is_active,
+                s.region,
+                s.currency
             FROM smallcases s
             WHERE s.id = :smallcase_id AND s.is_active = true
         """), {"smallcase_id": smallcase_id})
-        
+
         smallcase_row = result.fetchone()
         if not smallcase_row:
             raise HTTPException(status_code=404, detail="Smallcase not found")
-        
-        # Get constituents
+
+        # Get constituents with symbols for price refresh
         constituents_result = await db.execute(text("""
-            SELECT 
+            SELECT
                 sc.id,
                 sc.weight_percentage,
                 a.id as asset_id,
@@ -656,15 +658,40 @@ async def get_smallcase_details(smallcase_id: str, db: AsyncSession = Depends(ge
             WHERE sc.smallcase_id = :smallcase_id AND sc.is_active = true
             ORDER BY sc.weight_percentage DESC
         """), {"smallcase_id": smallcase_id})
-        
+
+        # Collect symbols for batch price refresh
+        constituent_rows = constituents_result.fetchall()
+        symbols = [row.symbol for row in constituent_rows]
+
+        # Refresh prices for all constituents if needed
+        if symbols:
+            from services.market_data_service import refresh_prices
+            region = smallcase_row.region
+            price_stats = await refresh_prices(db, symbols, region, use_case='smallcase_detail')
+            logger.info(f"Price refresh stats for smallcase {smallcase_id}: {price_stats}")
+
+        # Get updated prices after refresh
+        if symbols:
+            from services.market_data_service import get_prices
+            current_prices = await get_prices(db, symbols)
+        else:
+            current_prices = {}
+
         constituents = []
         total_value = 0
-        for const_row in constituents_result.fetchall():
+        for const_row in constituent_rows:
             weight = float(const_row.weight_percentage)
-            price = float(const_row.current_price) if const_row.current_price else 0
+
+            # Use refreshed price if available, otherwise fallback to database price
+            symbol = const_row.symbol
+            if symbol in current_prices:
+                price = float(current_prices[symbol])
+            else:
+                price = float(const_row.current_price) if const_row.current_price else 0
+
             value = price * weight / 100
             total_value += value
-            
+
             constituents.append({
                 "id": str(const_row.id),
                 "assetId": str(const_row.asset_id),

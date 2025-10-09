@@ -539,7 +539,7 @@ export default function SmallcasesPage() {
                                     <div className="text-right">
                                       <div className="font-medium">{asset.weightPercentage}%</div>
                                       <div className="text-sm">
-                                        ₹{asset.currentPrice.toLocaleString()}
+                                        {getCurrencySymbol(smallcaseDetails.currency)}{asset.currentPrice.toLocaleString()}
                                       </div>
                                     </div>
                                   </div>

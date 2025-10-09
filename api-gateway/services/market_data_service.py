@@ -153,6 +153,18 @@ class MarketDataService:
                             'timestamp': latest_bar.get('timestamp', datetime.utcnow())
                         }
 
+                # Fallback: fetch missing symbols individually
+                missing_symbols = set(symbols) - set(prices.keys())
+                if missing_symbols:
+                    logger.info(f"Batch fetch missed {len(missing_symbols)} symbols, fetching individually: {missing_symbols}")
+                    for symbol in missing_symbols:
+                        try:
+                            price_data = await MarketDataService.fetch_price_from_broker(broker, symbol)
+                            if price_data:
+                                prices[symbol] = price_data
+                        except Exception as e:
+                            logger.error(f"Failed to fetch price for {symbol}: {e}")
+
             elif region == 'IN' and hasattr(broker, 'get_quotes'):
                 # Zerodha batch quotes (if available)
                 logger.info(f"Fetching batch prices for {len(symbols)} Indian stocks")

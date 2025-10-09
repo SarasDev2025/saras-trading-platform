@@ -147,20 +147,22 @@ async def invest_in_smallcase(
     logger.info(f"🚀🚀🚀 INVEST ENDPOINT CALLED for smallcase {smallcase_id} with data {investment_data}")
     try:
         user_id = str(current_user["id"])  # Access user ID from dictionary
-        logger.info(f"👤👤👤 User ID: {user_id}")
-        print(f"👤👤👤 User ID: {user_id}")
-        
-        # Get user's default portfolio
+        user_trading_mode = current_user.get("trading_mode", "paper")
+        logger.info(f"👤👤👤 User ID: {user_id}, Trading Mode: {user_trading_mode}")
+        print(f"👤👤👤 User ID: {user_id}, Trading Mode: {user_trading_mode}")
+
+        # Get user's portfolio matching their trading mode
         portfolio_result = await db.execute(text("""
-            SELECT id FROM portfolios 
-            WHERE user_id = :user_id 
-            ORDER BY is_default DESC, created_at ASC 
+            SELECT id FROM portfolios
+            WHERE user_id = :user_id
+            AND trading_mode = :trading_mode
+            ORDER BY is_default DESC, created_at ASC
             LIMIT 1
-        """), {"user_id": user_id})
-        
+        """), {"user_id": user_id, "trading_mode": user_trading_mode})
+
         portfolio_row = portfolio_result.fetchone()
         if not portfolio_row:
-            raise HTTPException(status_code=400, detail="No portfolio found for user")
+            raise HTTPException(status_code=400, detail=f"No {user_trading_mode} portfolio found for user")
         
         portfolio_id = str(portfolio_row.id)
 
@@ -425,6 +427,109 @@ async def invest_in_smallcase(
                 print(f"⚠️  Warning: Failed to update position snapshots with broker: {snapshot_update_error}")
                 logger.warning(f"Failed to update position snapshots with broker: {snapshot_update_error}")
 
+        # Place actual broker orders (if not Zerodha paper mode)
+        selected_broker = broker_selection.get("selected_broker")
+        broker_connection_id = broker_connection.get("connection_id")
+
+        should_place_orders = False
+        if selected_broker == "alpaca":
+            # Alpaca: always place real orders (paper or live)
+            should_place_orders = True
+            print(f"🎯 Will place real orders with Alpaca (trading_mode={user_trading_mode})")
+        elif selected_broker == "zerodha" and user_trading_mode == "live":
+            # Zerodha: only place orders in live mode
+            should_place_orders = True
+            print(f"🎯 Will place real orders with Zerodha (live mode)")
+        else:
+            print(f"📝 Simulation mode - no real orders will be placed (broker={selected_broker}, mode={user_trading_mode})")
+
+        orders_placed = 0
+        orders_failed = 0
+
+        if should_place_orders and broker_connection_id:
+            try:
+                print(f"🚀 Starting order placement via {selected_broker}")
+
+                # Get broker connection from database
+                connection_result = await db.execute(text("""
+                    SELECT id, broker_type, paper_trading
+                    FROM user_broker_connections
+                    WHERE id = :connection_id
+                """), {"connection_id": broker_connection_id})
+
+                connection_row = connection_result.fetchone()
+                if not connection_row:
+                    raise Exception(f"Broker connection {broker_connection_id} not found")
+
+                # Get broker instance
+                from services.broker_connection_service import BrokerConnectionService
+                from models import UserBrokerConnection
+
+                conn_obj = UserBrokerConnection(
+                    id=connection_row.id,
+                    broker_type=connection_row.broker_type,
+                    paper_trading=connection_row.paper_trading
+                )
+
+                broker_instance, _ = await BrokerConnectionService.ensure_broker_session(conn_obj)
+                print(f"✅ Got broker instance: {broker_instance.__class__.__name__}")
+
+                # Place order for each constituent
+                for constituent in constituents:
+                    try:
+                        # Calculate quantity for this constituent
+                        weight_decimal = Decimal(str(constituent.weight_percentage or 0))
+                        constituent_value_decimal = (investment_amount * weight_decimal) / PERCENTAGE_DIVISOR
+                        price_value = constituent.current_price if constituent.current_price is not None else DEFAULT_STOCK_PRICE
+                        price_decimal = Decimal(str(price_value))
+                        if price_decimal <= 0:
+                            price_decimal = DEFAULT_STOCK_PRICE
+                        quantity_decimal = constituent_value_decimal / price_decimal
+
+                        # Import order types
+                        from brokers.base import OrderSide, OrderType
+
+                        # Place market buy order
+                        order = await broker_instance.place_order(
+                            symbol=constituent.symbol,
+                            side=OrderSide.BUY,
+                            quantity=quantity_decimal,
+                            order_type=OrderType.MARKET,
+                            time_in_force="day"
+                        )
+
+                        # Update holding with broker order ID
+                        await db.execute(text("""
+                            UPDATE portfolio_holdings
+                            SET broker_order_id = :broker_order_id,
+                                order_status = :order_status,
+                                order_placed_at = CURRENT_TIMESTAMP
+                            WHERE portfolio_id = :portfolio_id
+                            AND asset_id = :asset_id
+                        """), {
+                            "broker_order_id": order.order_id,
+                            "order_status": order.status.value if hasattr(order.status, 'value') else str(order.status),
+                            "portfolio_id": portfolio_id,
+                            "asset_id": str(constituent.asset_id)
+                        })
+
+                        orders_placed += 1
+                        print(f"  ✅ Placed order for {constituent.symbol}: {quantity_decimal:.4f} shares (order_id={order.order_id})")
+
+                    except Exception as order_error:
+                        orders_failed += 1
+                        print(f"  ❌ Failed to place order for {constituent.symbol}: {order_error}")
+                        logger.error(f"Failed to place order for {constituent.symbol}: {order_error}")
+                        # Continue with other orders
+
+                print(f"📊 Order placement summary: {orders_placed} placed, {orders_failed} failed")
+
+            except Exception as broker_error:
+                print(f"💥 Broker order placement error: {broker_error}")
+                logger.error(f"Broker order placement failed: {broker_error}")
+                # Don't fail the investment if order placement fails
+                # Holdings are created, orders can be retried manually
+
         # CRITICAL: Deduct investment amount from portfolio cash balance
         await db.execute(text("""
             UPDATE portfolios
@@ -446,7 +551,11 @@ async def invest_in_smallcase(
                 "amount": float(investment_amount),
                 "units": float(units_purchased),
                 "nav": float(nav),
-                "holdingsCreated": holdings_created
+                "holdingsCreated": holdings_created,
+                "ordersPlaced": orders_placed,
+                "ordersFailed": orders_failed,
+                "broker": selected_broker,
+                "tradingMode": user_trading_mode
             },
             message=f"Successfully invested ${investment_amount} in {smallcase_row.name}"
         )

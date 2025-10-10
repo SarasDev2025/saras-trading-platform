@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 from system.dependencies.enhanced_auth_deps import get_enhanced_current_user
 from services.portfolio_services import PortfolioService
+from services.portfolio_performance_service import PortfolioPerformanceService
 
 router = APIRouter()
 
@@ -542,6 +543,93 @@ async def create_portfolio_trade(portfolio_id: str, trade_data: dict):
         "filledAt": None
     }
     return APIResponse(success=True, data=new_trade, message="Trade created successfully")
+
+@router.get("/{portfolio_id}/performance", response_model=APIResponse)
+async def get_portfolio_performance(
+    portfolio_id: str,
+    timeframe: str = "1D",
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get portfolio performance data for charts
+
+    **Parameters:**
+    - **portfolio_id**: Portfolio UUID
+    - **timeframe**: One of: 1D, 1W, 1M, 3M, 1Y, YTD, OPEN, ALL (default: 1D)
+
+    **Returns:**
+    Chart data and performance metrics including returns, high/low, etc.
+    """
+    try:
+        user_id = current_user["id"] if current_user else None
+        portfolio_uuid = uuid.UUID(portfolio_id)
+
+        # Validate timeframe
+        valid_timeframes = ["1D", "1W", "1M", "3M", "1Y", "YTD", "OPEN", "ALL"]
+        if timeframe not in valid_timeframes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid timeframe. Must be one of: {', '.join(valid_timeframes)}"
+            )
+
+        # Get performance data
+        performance_data = await PortfolioPerformanceService.get_performance_data(
+            db=db,
+            portfolio_id=portfolio_uuid,
+            user_id=uuid.UUID(user_id),
+            timeframe=timeframe
+        )
+
+        return APIResponse(success=True, data=performance_data)
+
+    except ValueError as e:
+        logger.error(f"Invalid portfolio ID or user ID: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get portfolio performance: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get portfolio performance: {str(e)}")
+
+@router.post("/{portfolio_id}/performance/snapshot", response_model=APIResponse)
+async def create_performance_snapshot(
+    portfolio_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger creation of today's performance snapshot
+
+    **Parameters:**
+    - **portfolio_id**: Portfolio UUID
+
+    **Returns:**
+    Snapshot data for today
+    """
+    try:
+        user_id = current_user["id"]
+        portfolio_uuid = uuid.UUID(portfolio_id)
+
+        # Create today's snapshot
+        snapshot = await PortfolioPerformanceService.calculate_daily_snapshot(
+            db=db,
+            portfolio_id=portfolio_uuid,
+            user_id=uuid.UUID(user_id)
+        )
+
+        return APIResponse(
+            success=True,
+            data=snapshot,
+            message="Performance snapshot created successfully"
+        )
+
+    except ValueError as e:
+        logger.error(f"Invalid portfolio ID or user ID: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to create performance snapshot: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create performance snapshot: {str(e)}")
 
 @router.get("/status", response_model=List[PortfolioItem])
 async def status():

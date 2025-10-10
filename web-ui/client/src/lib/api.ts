@@ -222,7 +222,7 @@ export const portfolioAPI = {
     const response = await api.get<APIResponse>("/portfolios");
     return response.data;
   },
-  
+
   createPortfolio: async (portfolio: {
     name: string;
     description?: string;
@@ -231,12 +231,12 @@ export const portfolioAPI = {
     const response = await api.post<APIResponse>("/portfolios", portfolio);
     return response.data;
   },
-  
+
   getPortfolio: async (portfolio_id: string) => {
     const response = await api.get<APIResponse>(`/portfolios/${portfolio_id}`);
     return response.data;
   },
-  
+
   updatePortfolio: async (portfolio_id: string, updates: {
     name?: string;
     description?: string;
@@ -244,9 +244,19 @@ export const portfolioAPI = {
     const response = await api.put<APIResponse>(`/portfolios/${portfolio_id}`, updates);
     return response.data;
   },
-  
+
   deletePortfolio: async (portfolio_id: string) => {
     const response = await api.delete<APIResponse>(`/portfolios/${portfolio_id}`);
+    return response.data;
+  },
+
+  getPerformance: async (portfolio_id: string, timeframe: string = "1D") => {
+    const response = await api.get<APIResponse>(`/portfolios/${portfolio_id}/performance?timeframe=${timeframe}`);
+    return response.data;
+  },
+
+  createSnapshot: async (portfolio_id: string) => {
+    const response = await api.post<APIResponse>(`/portfolios/${portfolio_id}/performance/snapshot`);
     return response.data;
   }
 };

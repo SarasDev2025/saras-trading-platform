@@ -24,6 +24,7 @@ from models import APIResponse
 from services.order_aggregation_service import OrderAggregationService
 from services.dividend_service import DividendService
 from services.broker_selection_service import BrokerSelectionService
+from services.market_hours_service import get_market_status
 
 router = APIRouter(tags=["smallcases"])
 logger = logging.getLogger(__name__)
@@ -106,6 +107,25 @@ async def get_user_investments(
                     "status": row.broker_status
                 }
 
+            # Check order status of holdings to determine if position can be closed
+            # Check holdings for assets that are constituents of this smallcase
+            holdings_status = await db.execute(text("""
+                SELECT
+                    COUNT(*) as total_holdings,
+                    COUNT(CASE WHEN ph.order_status IS NULL OR ph.order_status IN ('filled', 'cancelled') THEN 1 END) as settled_holdings,
+                    COUNT(CASE WHEN ph.order_status IN ('pending', 'accepted', 'new', 'pending_new', 'submitted') THEN 1 END) as pending_holdings
+                FROM portfolio_holdings ph
+                INNER JOIN smallcase_constituents sc ON ph.asset_id = sc.asset_id
+                WHERE ph.portfolio_id = :portfolio_id
+                AND sc.smallcase_id = :smallcase_id
+                AND sc.is_active = true
+            """), {"portfolio_id": str(row.portfolio_id), "smallcase_id": str(row.smallcase_id)})
+
+            status_row = holdings_status.fetchone()
+            can_close = status_row.pending_holdings == 0 if status_row else True
+            pending_count = status_row.pending_holdings if status_row else 0
+            order_status = "pending_execution" if pending_count > 0 else "active"
+
             investments.append({
                 "id": str(row.id),
                 "investmentAmount": float(row.investment_amount),
@@ -115,6 +135,9 @@ async def get_user_investments(
                 "unrealizedPnL": float(row.unrealized_pnl) if row.unrealized_pnl else 0,
                 "status": row.status,
                 "investedAt": row.invested_at.isoformat(),
+                "canClose": can_close,
+                "pendingOrders": pending_count,
+                "orderStatus": order_status,
                 "smallcase": {
                     "id": str(row.smallcase_id),
                     "name": row.smallcase_name,
@@ -177,7 +200,7 @@ async def invest_in_smallcase(
         
         # Get smallcase details
         smallcase_result = await db.execute(text("""
-            SELECT minimum_investment, name FROM smallcases 
+            SELECT minimum_investment, name, region FROM smallcases
             WHERE id = :smallcase_id AND is_active = true
         """), {"smallcase_id": smallcase_id})
         
@@ -427,6 +450,19 @@ async def invest_in_smallcase(
                 print(f"⚠️  Warning: Failed to update position snapshots with broker: {snapshot_update_error}")
                 logger.warning(f"Failed to update position snapshots with broker: {snapshot_update_error}")
 
+        # Check market status
+        region = smallcase_row.region
+        logger.info(f"🌍 Getting market status for region: {region}")
+        market_status = get_market_status(region)
+        logger.info(f"📊 Market status response: {market_status}")
+        is_market_open = market_status.get('is_open', False)
+
+        if is_market_open:
+            logger.info(f"✅ {market_status.get('market_name')} is OPEN - orders will execute immediately")
+        else:
+            logger.info(f"⏰ {market_status.get('market_name')} is CLOSED - orders will be queued for next market open")
+            logger.info(f"   Next market open: {market_status.get('next_change_time')}")
+
         # Place actual broker orders (if not Zerodha paper mode)
         selected_broker = broker_selection.get("selected_broker")
         broker_connection_id = broker_connection.get("connection_id")
@@ -486,6 +522,13 @@ async def invest_in_smallcase(
                             price_decimal = DEFAULT_STOCK_PRICE
                         quantity_decimal = constituent_value_decimal / price_decimal
 
+                        # Check if broker supports fractional shares
+                        if not broker_instance.supports_fractional_shares():
+                            # Round to nearest whole number for brokers that don't support fractional shares
+                            original_quantity = quantity_decimal
+                            quantity_decimal = Decimal(int(quantity_decimal.quantize(Decimal('1'), rounding=ROUND_HALF_UP)))
+                            logger.info(f"📐 Rounded {constituent.symbol} quantity from {original_quantity:.4f} to {quantity_decimal} (broker doesn't support fractional shares)")
+
                         # Import order types
                         from brokers.base import OrderSide, OrderType
 
@@ -543,7 +586,12 @@ async def invest_in_smallcase(
         print(f"💰 Deducted ${investment_amount} from portfolio cash balance")
 
         await db.commit()
-        
+
+        # Prepare success message based on market status
+        base_msg = f"Successfully invested ${investment_amount} in {smallcase_row.name}"
+        if not is_market_open:
+            base_msg += ". Market is closed - orders queued to execute when market opens."
+
         return APIResponse(
             success=True,
             data={
@@ -555,9 +603,16 @@ async def invest_in_smallcase(
                 "ordersPlaced": orders_placed,
                 "ordersFailed": orders_failed,
                 "broker": selected_broker,
-                "tradingMode": user_trading_mode
+                "tradingMode": user_trading_mode,
+                "marketStatus": {
+                    "isOpen": is_market_open,
+                    "marketName": market_status.get('market_name'),
+                    "currentTime": market_status.get('current_time'),
+                    "nextChangeTime": market_status.get('next_change_time'),
+                    "orderExecution": "immediate" if is_market_open else "queued_for_next_open"
+                }
             },
-            message=f"Successfully invested ${investment_amount} in {smallcase_row.name}"
+            message=base_msg
         )
         
     except HTTPException:
@@ -1090,6 +1145,26 @@ async def close_smallcase_position(
             )
 
         user_id = str(current_user["id"])
+
+        # Check if investment has pending orders that haven't been filled yet
+        # Join through smallcase_constituents to find holdings that belong to this investment
+        pending_check = await db.execute(text("""
+            SELECT COUNT(*) as pending_count
+            FROM portfolio_holdings ph
+            INNER JOIN smallcase_constituents sc ON ph.asset_id = sc.asset_id
+            INNER JOIN user_smallcase_investments usi ON sc.smallcase_id = usi.smallcase_id AND ph.portfolio_id = usi.portfolio_id
+            WHERE usi.id = :investment_id
+            AND usi.user_id = :user_id
+            AND sc.is_active = true
+            AND ph.order_status IN ('pending', 'accepted', 'new', 'pending_new', 'submitted')
+        """), {"investment_id": investment_id, "user_id": user_id})
+
+        pending_row = pending_check.fetchone()
+        if pending_row and pending_row.pending_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot close position: {pending_row.pending_count} order(s) are still pending execution. Please wait for orders to fill before closing. This typically takes a few minutes after market opens."
+            )
 
         logger.info(f"[Closure] User {user_id} closing investment {investment_id} - {closure_percentage}% - {closure_reason}")
 

@@ -63,6 +63,9 @@ type UserInvestment = {
   unrealizedPnL: number;
   status: string;
   investedAt: string;
+  canClose: boolean;
+  pendingOrders: number;
+  orderStatus: 'pending_execution' | 'active';
   smallcase: {
     id: string;
     name: string;
@@ -91,6 +94,13 @@ export default function SmallcasesPage() {
   const [selectedInvestmentForClosure, setSelectedInvestmentForClosure] = useState<UserInvestment | null>(null);
   const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
   const [isClosingPosition, setIsClosingPosition] = useState(false);
+
+  // Market Closed Dialog State
+  const [showMarketClosedDialog, setShowMarketClosedDialog] = useState(false);
+  const [pendingInvestment, setPendingInvestment] = useState<{
+    smallcase: Smallcase;
+    amount: number;
+  } | null>(null);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -164,7 +174,7 @@ export default function SmallcasesPage() {
     refetchInvestments();
   };
 
-  const handleInvest = async () => {
+  const handleInvest = () => {
     if (!selectedSmallcase) return;
 
     // Check buying power before investment
@@ -172,16 +182,36 @@ export default function SmallcasesPage() {
       return; // Insufficient funds dialog will be shown automatically
     }
 
+    // Show market closed warning dialog
+    setPendingInvestment({
+      smallcase: selectedSmallcase,
+      amount: investmentAmount
+    });
+    setShowMarketClosedDialog(true);
+  };
+
+  const proceedWithInvestment = async () => {
+    if (!pendingInvestment) return;
+
+    setShowMarketClosedDialog(false);
+
     try {
       setIsInvesting(true);
-      await apiRequest.post(`/smallcases/${selectedSmallcase.id}/invest`, {
-        amount: investmentAmount,
+      const response = await apiRequest.post(`/smallcases/${pendingInvestment.smallcase.id}/invest`, {
+        amount: pendingInvestment.amount,
         portfolio_id: "default-portfolio-id" // You might want to get this dynamically
       });
 
+      // Extract market status from response
+      const marketStatus = response.data.data?.marketStatus;
+      const isMarketOpen = marketStatus?.isOpen ?? true;
+      const currencySymbol = pendingInvestment.smallcase.currency === 'USD' ? '$' : pendingInvestment.smallcase.currency === 'INR' ? '₹' : pendingInvestment.smallcase.currency;
+
       toast({
-        title: "Investment Successful",
-        description: `You've successfully invested ₹${investmentAmount.toLocaleString()} in ${selectedSmallcase.name}`,
+        title: isMarketOpen ? "Investment Successful" : "Investment Queued",
+        description: isMarketOpen
+          ? `You've successfully invested ${currencySymbol}${pendingInvestment.amount.toLocaleString()} in ${pendingInvestment.smallcase.name}`
+          : `Market is closed. Your ${currencySymbol}${pendingInvestment.amount.toLocaleString()} investment in ${pendingInvestment.smallcase.name} will execute when ${marketStatus.marketName} opens.`,
       });
 
       // Refresh investments data and buying power
@@ -214,6 +244,7 @@ export default function SmallcasesPage() {
       }
     } finally {
       setIsInvesting(false);
+      setPendingInvestment(null);
     }
   };
 
@@ -433,15 +464,28 @@ export default function SmallcasesPage() {
                             size="sm"
                             className="text-xs px-1.5 min-w-0"
                             onClick={() => handleClosePosition(investment)}
+                            disabled={!investment.canClose}
                           >
                             <X className="w-3 h-3 md:mr-1 shrink-0" />
-                            <span className="hidden md:inline truncate">Close</span>
+                            <span className="hidden md:inline truncate">
+                              {investment.canClose ? 'Close' : 'Executing'}
+                            </span>
                           </Button>
                         </div>
-                        
+
                         <div className="text-xs text-muted-foreground pt-1">
                           Invested on {new Date(investment.investedAt).toLocaleDateString()}
+                          {investment.pendingOrders > 0 && (
+                            <Badge variant="outline" className="ml-2 text-xs">
+                              ⏳ {investment.pendingOrders} order{investment.pendingOrders > 1 ? 's' : ''} pending
+                            </Badge>
+                          )}
                         </div>
+                        {!investment.canClose && (
+                          <p className="text-xs text-amber-600 mt-1">
+                            Orders are being executed. You can close once all orders are filled.
+                          </p>
+                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -695,6 +739,43 @@ export default function SmallcasesPage() {
         onClose={() => setIsModificationOpen(false)}
         onApplyRebalancing={handleApplyRebalancing}
       />
+
+      {/* Market Closed Warning Dialog */}
+      <AlertDialog open={showMarketClosedDialog} onOpenChange={setShowMarketClosedDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>⏰ Confirm Investment</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              {pendingInvestment && (
+                <>
+                  <p>
+                    You're about to invest <strong>{getCurrencySymbol(pendingInvestment.smallcase.currency)}{pendingInvestment.amount.toLocaleString()}</strong> in <strong>{pendingInvestment.smallcase.name}</strong>.
+                  </p>
+                  <div className="rounded-md bg-yellow-50 p-3 border border-yellow-200">
+                    <p className="text-sm text-yellow-800">
+                      <strong>Note:</strong> If the market is currently closed, your orders will be queued and executed when the market opens. You won't be able to cancel this investment until the orders are filled.
+                    </p>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Do you want to proceed?
+                  </p>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowMarketClosedDialog(false);
+              setPendingInvestment(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={proceedWithInvestment}>
+              Proceed with Investment
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Insufficient Funds Dialog */}
       {insufficientDetails && (

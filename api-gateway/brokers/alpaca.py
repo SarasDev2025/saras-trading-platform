@@ -109,7 +109,11 @@ class AlpacaBroker(BaseBroker):
             if isinstance(e, (AuthenticationError, MarketDataError)):
                 raise
             raise MarketDataError(str(e), "alpaca")
-    
+
+    def supports_fractional_shares(self) -> bool:
+        """Alpaca supports fractional share trading"""
+        return True
+
     async def get_positions(self) -> List[Position]:
         """Get Alpaca positions"""
         await self.ensure_authenticated()
@@ -198,7 +202,7 @@ class AlpacaBroker(BaseBroker):
                 "side": side,
                 "type": alpaca_order_type,
                 "time_in_force": time_in_force,  # day, gtc, ioc, fok, cls
-                "qty": str(int(quantity)),
+                "qty": str(float(quantity)),  # Alpaca supports fractional shares
                 "extended_hours": extended_hours  # Allow extended hours trading
             }
             

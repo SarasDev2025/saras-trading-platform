@@ -332,7 +332,16 @@ class BaseBroker(ABC):
     async def get_orders(self) -> List[Order]:
         """Get all orders (optional)"""
         raise NotImplementedError("Order listing not supported by this broker")
-    
+
+    def supports_fractional_shares(self) -> bool:
+        """
+        Check if broker supports fractional share trading.
+
+        Returns:
+            bool: True if broker supports fractional shares, False otherwise
+        """
+        return False  # Default: no fractional support
+
     async def get_trades(self) -> List[Dict[str, Any]]:
         """Get executed trades (optional)"""
         raise NotImplementedError("Trade listing not supported by this broker")

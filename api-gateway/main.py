@@ -18,7 +18,7 @@ from sqlalchemy import text  # Add this line
 from config.database import Base, get_db
 from routers import (
     auth_router, portfolio_router, alpaca_router, info_router,
-    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router, settings_router, broker_config_router
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router, settings_router, broker_config_router, algorithm_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -182,6 +182,11 @@ async def _start_background_tasks():
         await initialize_dividend_scheduler(async_session)
         logger.info("✅ Dividend scheduler initialized")
 
+        # Initialize algorithm scheduler
+        from schedulers.algorithm_scheduler import start_scheduler
+        await start_scheduler()
+        logger.info("✅ Algorithm scheduler initialized")
+
         # You can add more background tasks here like:
         # - Cleaning old audit logs
         # - Refreshing security metrics
@@ -200,6 +205,15 @@ async def _stop_background_tasks():
             await scheduler.stop()
             logger.info("✅ Dividend scheduler stopped")
         except RuntimeError:
+            # Scheduler not initialized, ignore
+            pass
+
+        # Stop algorithm scheduler
+        from schedulers.algorithm_scheduler import stop_scheduler
+        try:
+            await stop_scheduler()
+            logger.info("✅ Algorithm scheduler stopped")
+        except Exception:
             # Scheduler not initialized, ignore
             pass
 
@@ -423,6 +437,7 @@ app.include_router(rebalancing_router.router, prefix="/api/v1", tags=["Rebalanci
 app.include_router(trade_router.router, prefix="/api/v1", tags=["Trading"])
 app.include_router(alpaca_router.router, prefix="/api/v1", tags=["Alpaca"])
 app.include_router(info_router.router, prefix="/api/v1", tags=["Market Info"])
+app.include_router(algorithm_router.router, prefix="/api/v1/algorithms", tags=["Algorithm Trading"])
 
 # Root endpoint
 @app.get("/")

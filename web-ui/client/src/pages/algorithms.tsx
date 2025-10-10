@@ -1,199 +1,321 @@
-import { Sidebar } from "@/components/layout/sidebar";
-import { Header } from "@/components/layout/header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Play, Pause, Code, TrendingUp } from "lucide-react";
+import { useEffect, useState } from 'react';
+import { Sidebar } from '@/components/layout/sidebar';
+import { Header } from '@/components/layout/header';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlgorithmBuilder } from '@/components/algorithms/AlgorithmBuilder';
+import { BacktestPanel } from '@/components/algorithms/BacktestPanel';
+import { AlgorithmCard } from '@/components/algorithms/AlgorithmCard';
+import { algorithmAPI } from '@/lib/api';
+import { Code, TrendingUp, Activity, DollarSign, Target, Loader2, AlertCircle } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 export default function Algorithms() {
-  const mockAlgorithms = [
-    {
-      id: "1",
-      name: "RSI Signals",
-      description: "Generate buy/sell signals based on RSI indicator",
-      language: "python",
-      isActive: true,
-      lastRun: "2024-01-15T10:30:00Z",
-      performance: { accuracy: 0.73, trades: 45, pnl: 12450 },
-    },
-    {
-      id: "2",
-      name: "Moving Average Crossover",
-      description: "SMA crossover strategy with dynamic parameters",
-      language: "python",
-      isActive: false,
-      lastRun: null,
-      performance: { accuracy: 0.68, trades: 32, pnl: 8200 },
-    },
-    {
-      id: "3",
-      name: "Bollinger Band Squeeze",
-      description: "Identify volatility contractions and expansions",
-      language: "python",
-      isActive: true,
-      lastRun: "2024-01-15T09:15:00Z",
-      performance: { accuracy: 0.71, trades: 28, pnl: 9850 },
-    },
-  ];
+  const [algorithms, setAlgorithms] = useState<any[]>([]);
+  const [dashboard, setDashboard] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const formatDateTime = (dateString: string | null) => {
-    if (!dateString) return "Never";
-    return new Date(dateString).toLocaleString();
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [showBacktest, setShowBacktest] = useState(false);
+  const [selectedAlgorithm, setSelectedAlgorithm] = useState<any>(null);
+
+  const { toast } = useToast();
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [algoResponse, dashResponse] = await Promise.all([
+        algorithmAPI.getAlgorithms(),
+        algorithmAPI.getDashboard(),
+      ]);
+
+      if (algoResponse.success) {
+        setAlgorithms(algoResponse.data);
+      }
+
+      if (dashResponse.success) {
+        setDashboard(dashResponse.data);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load algorithms');
+      toast({
+        title: 'Error',
+        description: 'Failed to load algorithms',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleCreateNew = () => {
+    setSelectedAlgorithm(null);
+    setShowBuilder(true);
+  };
+
+  const handleEdit = async (id: string) => {
+    try {
+      const response = await algorithmAPI.getAlgorithm(id);
+      if (response.success) {
+        setSelectedAlgorithm(response.data);
+        setShowBuilder(true);
+      }
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: 'Failed to load algorithm',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleSave = async (algorithm: any) => {
+    try {
+      if (algorithm.id) {
+        // Update existing
+        await algorithmAPI.updateAlgorithm(algorithm.id, algorithm);
+        toast({
+          title: 'Success',
+          description: 'Algorithm updated successfully',
+        });
+      } else {
+        // Create new
+        await algorithmAPI.createAlgorithm(algorithm);
+        toast({
+          title: 'Success',
+          description: 'Algorithm created successfully',
+        });
+      }
+
+      setShowBuilder(false);
+      loadData();
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to save algorithm',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this algorithm?')) return;
+
+    try {
+      await algorithmAPI.deleteAlgorithm(id);
+      toast({
+        title: 'Success',
+        description: 'Algorithm deleted successfully',
+      });
+      loadData();
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete algorithm',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleToggle = async (id: string) => {
+    try {
+      await algorithmAPI.toggleAlgorithm(id);
+      toast({
+        title: 'Success',
+        description: 'Algorithm status updated',
+      });
+      loadData();
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: 'Failed to toggle algorithm',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleExecute = async (id: string) => {
+    try {
+      const response = await algorithmAPI.executeAlgorithm(id, false);
+
+      if (response.success) {
+        toast({
+          title: 'Success',
+          description: `Generated ${response.data.signals_generated} signals`,
+        });
+        loadData();
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err.response?.data?.message || 'Execution failed',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleBacktest = (id: string) => {
+    setSelectedAlgorithm({ id });
+    setShowBacktest(true);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex">
+        <Sidebar />
+        <main className="flex-1 overflow-hidden">
+          <Header title="Algorithms" subtitle="Manage and monitor your trading algorithms" />
+          <div className="p-6 h-full flex items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex">
       <Sidebar />
-      
+
       <main className="flex-1 overflow-hidden">
-        <Header 
-          title="Algorithms" 
-          subtitle="Manage and monitor your trading algorithms"
-        />
-        
+        <Header title="Algorithms" subtitle="Manage and monitor your trading algorithms" />
+
         <div className="p-6 h-full overflow-y-auto">
+          {error && (
+            <Alert variant="destructive" className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-white">Your Algorithms</h2>
-            <div className="space-x-2">
-              <Button variant="outline" className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)]">
-                Import
-              </Button>
-              <Button className="btn-primary">
-                <Code className="w-4 h-4 mr-2" />
-                New Algorithm
-              </Button>
+            <Button onClick={handleCreateNew} className="btn-primary">
+              <Code className="w-4 h-4 mr-2" />
+              New Algorithm
+            </Button>
+          </div>
+
+          {/* Dashboard Stats */}
+          {dashboard && (
+            <Card className="chart-container mb-6">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center">
+                  <TrendingUp className="w-5 h-5 mr-2" />
+                  Algorithm Performance Overview
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <div className="text-center">
+                    <div className="flex items-center justify-center mb-2">
+                      <Activity className="w-5 h-5 text-[var(--success-green)]" />
+                    </div>
+                    <div className="text-2xl font-bold success-text">
+                      {dashboard.active_algorithms || 0}
+                    </div>
+                    <div className="text-sm text-gray-400">Active Algorithms</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="flex items-center justify-center mb-2">
+                      <Target className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="text-2xl font-bold text-white">
+                      {dashboard.today_trades || 0}
+                    </div>
+                    <div className="text-sm text-gray-400">Today's Trades</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="flex items-center justify-center mb-2">
+                      <DollarSign className="w-5 h-5 text-[var(--success-green)]" />
+                    </div>
+                    <div
+                      className={`text-2xl font-bold ${
+                        (dashboard.today_pnl || 0) >= 0 ? 'success-text' : 'danger-text'
+                      }`}
+                    >
+                      ${(dashboard.today_pnl || 0).toLocaleString()}
+                    </div>
+                    <div className="text-sm text-gray-400">Today's P&L</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="flex items-center justify-center mb-2">
+                      <TrendingUp className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="text-2xl font-bold text-white">
+                      {dashboard.avg_win_rate?.toFixed(1) || 0}%
+                    </div>
+                    <div className="text-sm text-gray-400">Avg Win Rate</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Algorithms Grid */}
+          {algorithms.length === 0 ? (
+            <Card className="chart-container">
+              <CardContent className="py-12 text-center">
+                <Code className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                <p className="text-gray-400 mb-4">No algorithms yet</p>
+                <Button onClick={handleCreateNew} className="btn-primary">
+                  Create Your First Algorithm
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+              {algorithms.map((algorithm) => (
+                <AlgorithmCard
+                  key={algorithm.id}
+                  algorithm={algorithm}
+                  onExecute={handleExecute}
+                  onToggle={handleToggle}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onBacktest={handleBacktest}
+                />
+              ))}
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-            {mockAlgorithms.map((algorithm) => (
-              <Card key={algorithm.id} className="chart-container">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-white text-lg">{algorithm.name}</CardTitle>
-                    <Switch checked={algorithm.isActive} />
-                  </div>
-                  <p className="text-sm text-gray-400 mt-2">{algorithm.description}</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Language</span>
-                      <Badge variant="secondary" className="bg-[var(--carbon-gray-80)] text-white">
-                        {algorithm.language.toUpperCase()}
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Status</span>
-                      <Badge 
-                        className={
-                          algorithm.isActive 
-                            ? "bg-[var(--success-green)] bg-opacity-20 text-[var(--success-green)]"
-                            : "bg-[var(--carbon-gray-80)] text-gray-400"
-                        }
-                      >
-                        {algorithm.isActive ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Last Run</span>
-                      <span className="text-sm text-white">
-                        {formatDateTime(algorithm.lastRun)}
-                      </span>
-                    </div>
-
-                    <div className="border-t border-[var(--carbon-gray-80)] pt-4">
-                      <h4 className="text-sm font-medium text-gray-400 mb-3">Performance</h4>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-400">Accuracy</span>
-                          <span className="text-xs text-white font-medium">
-                            {(algorithm.performance.accuracy * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-400">Trades</span>
-                          <span className="text-xs text-white font-medium">
-                            {algorithm.performance.trades}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-400">P&L</span>
-                          <span className={`text-xs font-medium ${
-                            algorithm.performance.pnl >= 0 ? 'success-text' : 'danger-text'
-                          }`}>
-                            ${algorithm.performance.pnl.toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex space-x-2 pt-4">
-                      <Button 
-                        size="sm" 
-                        className="flex-1 btn-primary"
-                        disabled={!algorithm.isActive}
-                      >
-                        {algorithm.isActive ? (
-                          <>
-                            <Play className="w-3 h-3 mr-1" />
-                            Run
-                          </>
-                        ) : (
-                          <>
-                            <Pause className="w-3 h-3 mr-1" />
-                            Paused
-                          </>
-                        )}
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)]"
-                      >
-                        Edit
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {/* Algorithm Performance Overview */}
-          <Card className="chart-container">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center">
-                <TrendingUp className="w-5 h-5 mr-2" />
-                Algorithm Performance Overview
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="text-center">
-                  <div className="text-2xl font-bold success-text">3</div>
-                  <div className="text-sm text-gray-400">Active Algorithms</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-white">105</div>
-                  <div className="text-sm text-gray-400">Total Trades</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold success-text">71.2%</div>
-                  <div className="text-sm text-gray-400">Avg Accuracy</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold success-text">$30,500</div>
-                  <div className="text-sm text-gray-400">Total P&L</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          )}
         </div>
       </main>
+
+      {/* Algorithm Builder Dialog */}
+      <Dialog open={showBuilder} onOpenChange={setShowBuilder}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedAlgorithm ? 'Edit Algorithm' : 'Create Algorithm'}
+            </DialogTitle>
+          </DialogHeader>
+          <AlgorithmBuilder
+            algorithm={selectedAlgorithm}
+            onSave={handleSave}
+            onCancel={() => setShowBuilder(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Backtest Dialog */}
+      <Dialog open={showBacktest} onOpenChange={setShowBacktest}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Backtest Algorithm</DialogTitle>
+          </DialogHeader>
+          {selectedAlgorithm && <BacktestPanel algorithmId={selectedAlgorithm.id} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

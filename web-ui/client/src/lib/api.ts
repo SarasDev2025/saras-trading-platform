@@ -267,7 +267,7 @@ export const userAPI = {
     const response = await api.get<APIResponse>("/users/profile");
     return response.data;
   },
-  
+
   updateProfile: async (updates: {
     first_name?: string;
     last_name?: string;
@@ -276,6 +276,115 @@ export const userAPI = {
     const response = await api.put<APIResponse>("/users/profile", updates);
     return response.data;
   }
+};
+
+// Algorithm API functions
+export const algorithmAPI = {
+  // List algorithms
+  getAlgorithms: async (status?: string) => {
+    const url = status
+      ? `/api/v1/algorithms?status=${status}`
+      : '/api/v1/algorithms';
+    const response = await api.get<APIResponse>(url);
+    return response.data;
+  },
+
+  // Get single algorithm
+  getAlgorithm: async (algorithm_id: string) => {
+    const response = await api.get<APIResponse>(`/api/v1/algorithms/${algorithm_id}`);
+    return response.data;
+  },
+
+  // Create algorithm
+  createAlgorithm: async (algorithm: {
+    name: string;
+    strategy_code: string;
+    parameters?: Record<string, any>;
+    auto_run?: boolean;
+    execution_interval?: string;
+    max_positions?: number;
+    risk_per_trade?: number;
+  }) => {
+    const response = await api.post<APIResponse>('/api/v1/algorithms', algorithm);
+    return response.data;
+  },
+
+  // Update algorithm
+  updateAlgorithm: async (algorithm_id: string, updates: {
+    name?: string;
+    strategy_code?: string;
+    parameters?: Record<string, any>;
+    auto_run?: boolean;
+    execution_interval?: string;
+    max_positions?: number;
+    risk_per_trade?: number;
+  }) => {
+    const response = await api.put<APIResponse>(`/api/v1/algorithms/${algorithm_id}`, updates);
+    return response.data;
+  },
+
+  // Delete algorithm
+  deleteAlgorithm: async (algorithm_id: string) => {
+    const response = await api.delete<APIResponse>(`/api/v1/algorithms/${algorithm_id}`);
+    return response.data;
+  },
+
+  // Toggle algorithm status
+  toggleAlgorithm: async (algorithm_id: string) => {
+    const response = await api.post<APIResponse>(`/api/v1/algorithms/${algorithm_id}/toggle`);
+    return response.data;
+  },
+
+  // Execute algorithm
+  executeAlgorithm: async (algorithm_id: string, dry_run: boolean = false) => {
+    const response = await api.post<APIResponse>(
+      `/api/v1/algorithms/${algorithm_id}/execute?dry_run=${dry_run}`
+    );
+    return response.data;
+  },
+
+  // Get signals
+  getSignals: async (algorithm_id: string, limit: number = 50) => {
+    const response = await api.get<APIResponse>(
+      `/api/v1/algorithms/${algorithm_id}/signals?limit=${limit}`
+    );
+    return response.data;
+  },
+
+  // Validate code
+  validateCode: async (strategy_code: string) => {
+    const response = await api.post<APIResponse>('/api/v1/algorithms/validate', {
+      strategy_code,
+    });
+    return response.data;
+  },
+
+  // Run backtest
+  runBacktest: async (algorithm_id: string, config: {
+    start_date: string;
+    end_date: string;
+    initial_capital: number;
+  }) => {
+    const response = await api.post<APIResponse>(
+      `/api/v1/algorithms/${algorithm_id}/backtest`,
+      config
+    );
+    return response.data;
+  },
+
+  // Get backtest results
+  getBacktestResults: async (algorithm_id: string, limit: number = 10) => {
+    const response = await api.get<APIResponse>(
+      `/api/v1/algorithms/${algorithm_id}/backtest-results?limit=${limit}`
+    );
+    return response.data;
+  },
+
+  // Get dashboard
+  getDashboard: async () => {
+    const response = await api.get<APIResponse>('/api/v1/algorithms/dashboard');
+    return response.data;
+  },
 };
 
 export default api;

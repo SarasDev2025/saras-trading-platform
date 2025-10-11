@@ -294,7 +294,7 @@ class EnhancedTokenService:
         self.algorithm = algorithm
     
     async def validate_token_comprehensive(
-        self, token: str, db: AsyncSession, 
+        self, token: str, db: AsyncSession,
         client_ip: str, user_agent: str
     ) -> Dict[str, Any]:
         """
@@ -302,24 +302,31 @@ class EnhancedTokenService:
         Returns user info and logs validation attempt
         """
         validation_start = time.time()
-        
+
         try:
+            logger.info(f"[TOKEN_VALIDATION] Starting validation for token: {token[:20]}...")
+
             # 1. Basic JWT validation
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             user_id = payload.get("sub")
             token_type = payload.get("type", "access")
             issued_at = payload.get("iat")
             expires_at = payload.get("exp")
-            
+
+            logger.info(f"[TOKEN_VALIDATION] JWT decoded - user_id: {user_id}, type: {token_type}")
+
             if not user_id or token_type != "access":
+                logger.error(f"[TOKEN_VALIDATION] Invalid token structure - user_id: {user_id}, type: {token_type}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid token structure"
                 )
-            
+
             # 2. Check if token is blacklisted
+            logger.info(f"[TOKEN_VALIDATION] Checking blacklist for user: {user_id}")
             is_blacklisted = await self._check_token_blacklist(db, token)
             if is_blacklisted:
+                logger.warning(f"[TOKEN_VALIDATION] Token is blacklisted for user: {user_id}")
                 await self._log_suspicious_activity(
                     db, user_id, "BLACKLISTED_TOKEN_USE", client_ip, user_agent
                 )
@@ -327,36 +334,42 @@ class EnhancedTokenService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token has been revoked"
                 )
-            
+
             # 3. Get user info and check account status
+            logger.info(f"[TOKEN_VALIDATION] Fetching user info for: {user_id}")
             user_info = await self._get_user_with_security_check(db, user_id)
             if not user_info:
+                logger.error(f"[TOKEN_VALIDATION] User not found: {user_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User not found"
                 )
-            
+
             # 4. Check for suspicious patterns
+            logger.info(f"[TOKEN_VALIDATION] Checking suspicious patterns for: {user_id}")
             await self._check_suspicious_patterns(
                 db, user_id, client_ip, user_agent, token
             )
-            
+
             # 5. Log successful validation
             validation_time = (time.time() - validation_start) * 1000
             await self._log_token_validation(
                 db, user_id, "SUCCESS", validation_time, client_ip, user_agent
             )
-            
+
+            logger.info(f"[TOKEN_VALIDATION] SUCCESS for user: {user_id}")
+
             return {
                 "user_id": user_id,
                 "user": user_info,
                 "token_age": time.time() - issued_at,
                 "validation_time_ms": validation_time
             }
-            
+
         except JWTError as e:
+            logger.error(f"[TOKEN_VALIDATION] JWT_ERROR: {str(e)}")
             await self._log_token_validation(
-                db, None, "JWT_ERROR", (time.time() - validation_start) * 1000, 
+                db, None, "JWT_ERROR", (time.time() - validation_start) * 1000,
                 client_ip, user_agent, str(e)
             )
             raise HTTPException(
@@ -366,6 +379,7 @@ class EnhancedTokenService:
         except HTTPException:
             raise
         except Exception as e:
+            logger.error(f"[TOKEN_VALIDATION] EXCEPTION: {str(e)}", exc_info=True)
             await self._log_token_validation(
                 db, None, "VALIDATION_ERROR", (time.time() - validation_start) * 1000,
                 client_ip, user_agent, str(e)

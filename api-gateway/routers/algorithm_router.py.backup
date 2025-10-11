@@ -3,7 +3,6 @@ Algorithm Router
 API endpoints for algorithmic trading
 """
 import uuid
-import json
 import logging
 from datetime import date, datetime
 from decimal import Decimal
@@ -138,8 +137,8 @@ async def create_algorithm(
             "language": request.language,
             "builder_type": request.builder_type,
             "strategy_code": strategy_code,
-            "visual_config": json.dumps(request.visual_config) if request.visual_config else None,
-            "parameters": json.dumps(request.parameters) if request.parameters else '{}',
+            "visual_config": request.visual_config,
+            "parameters": request.parameters,
             "auto_run": request.auto_run,
             "execution_interval": request.execution_interval,
             "max_positions": request.max_positions,
@@ -275,167 +274,6 @@ async def get_dashboard(
 
     except Exception as e:
         logger.error(f"Failed to get dashboard: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# =====================================================
-# Visual/No-Code Algorithm Endpoints
-# =====================================================
-
-@router.get("/visual-blocks", response_model=APIResponse)
-async def get_visual_blocks():
-    """Get available building blocks for visual algorithm builder (public endpoint)"""
-    try:
-        blocks = VisualAlgorithmCompiler.get_available_blocks()
-        return APIResponse(success=True, data=blocks)
-
-    except Exception as e:
-        logger.error(f"Failed to get visual blocks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/visual/compile", response_model=APIResponse)
-async def compile_visual_algorithm(
-    visual_config: Dict[str, Any],
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)]
-):
-    """Compile visual configuration to Python code (preview)"""
-    try:
-        # Validate configuration
-        validation = VisualAlgorithmCompiler.validate_visual_config(visual_config)
-        if not validation['valid']:
-            raise HTTPException(status_code=400, detail=validation['error'])
-
-        # Compile to code
-        code = VisualAlgorithmCompiler.compile_visual_to_code(visual_config)
-
-        return APIResponse(
-            success=True,
-            data={
-                'code': code,
-                'validation': validation
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to compile visual algorithm: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/visual/validate", response_model=APIResponse)
-async def validate_visual_algorithm(
-    visual_config: Dict[str, Any],
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)]
-):
-    """Validate visual configuration"""
-    try:
-        validation = VisualAlgorithmCompiler.validate_visual_config(visual_config)
-        return APIResponse(
-            success=validation['valid'],
-            data=validation
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to validate visual algorithm: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/visual-templates", response_model=APIResponse)
-async def get_visual_templates(
-    category: Optional[str] = Query(None),
-    difficulty: Optional[str] = Query(None),
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get visual strategy templates"""
-    try:
-        # Build query
-        query = """
-            SELECT
-                id, name, description, category, difficulty_level,
-                visual_config, default_parameters,
-                compatible_regions, compatible_brokers
-            FROM visual_strategy_templates
-            WHERE is_active = true
-        """
-
-        params = {}
-
-        if category:
-            query += " AND category = :category"
-            params['category'] = category
-
-        if difficulty:
-            query += " AND difficulty_level = :difficulty"
-            params['difficulty'] = difficulty
-
-        query += " ORDER BY usage_count DESC, name ASC"
-
-        result = await db.execute(text(query), params)
-
-        templates = []
-        for row in result.fetchall():
-            templates.append({
-                'id': str(row.id),
-                'name': row.name,
-                'description': row.description,
-                'category': row.category,
-                'difficulty_level': row.difficulty_level,
-                'visual_config': row.visual_config,
-                'default_parameters': row.default_parameters,
-                'compatible_regions': row.compatible_regions,
-                'compatible_brokers': row.compatible_brokers
-            })
-
-        return APIResponse(success=True, data=templates)
-
-    except Exception as e:
-        logger.error(f"Failed to get visual templates: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/visual-templates/{template_id}/use", response_model=APIResponse)
-async def use_visual_template(
-    template_id: str,
-    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
-    db: AsyncSession = Depends(get_db)
-):
-    """Increment usage count for a template and return its configuration"""
-    try:
-        # Get template
-        result = await db.execute(text("""
-            SELECT visual_config, default_parameters, name
-            FROM visual_strategy_templates
-            WHERE id = :template_id AND is_active = true
-        """), {"template_id": template_id})
-
-        template = result.fetchone()
-        if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
-
-        # Increment usage count
-        await db.execute(text("""
-            UPDATE visual_strategy_templates
-            SET usage_count = usage_count + 1
-            WHERE id = :template_id
-        """), {"template_id": template_id})
-
-        await db.commit()
-
-        return APIResponse(
-            success=True,
-            data={
-                'name': template.name,
-                'visual_config': template.visual_config,
-                'default_parameters': template.default_parameters
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to use visual template: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -830,3 +668,163 @@ async def validate_code(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =====================================================
+# Visual/No-Code Algorithm Endpoints
+# =====================================================
+
+@router.get("/visual-blocks", response_model=APIResponse)
+async def get_visual_blocks():
+    """Get available building blocks for visual algorithm builder (public endpoint)"""
+    try:
+        blocks = VisualAlgorithmCompiler.get_available_blocks()
+        return APIResponse(success=True, data=blocks)
+
+    except Exception as e:
+        logger.error(f"Failed to get visual blocks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/visual/compile", response_model=APIResponse)
+async def compile_visual_algorithm(
+    visual_config: Dict[str, Any],
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)]
+):
+    """Compile visual configuration to Python code (preview)"""
+    try:
+        # Validate configuration
+        validation = VisualAlgorithmCompiler.validate_visual_config(visual_config)
+        if not validation['valid']:
+            raise HTTPException(status_code=400, detail=validation['error'])
+
+        # Compile to code
+        code = VisualAlgorithmCompiler.compile_visual_to_code(visual_config)
+
+        return APIResponse(
+            success=True,
+            data={
+                'code': code,
+                'validation': validation
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to compile visual algorithm: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/visual/validate", response_model=APIResponse)
+async def validate_visual_algorithm(
+    visual_config: Dict[str, Any],
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)]
+):
+    """Validate visual configuration"""
+    try:
+        validation = VisualAlgorithmCompiler.validate_visual_config(visual_config)
+        return APIResponse(
+            success=validation['valid'],
+            data=validation
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to validate visual algorithm: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/visual-templates", response_model=APIResponse)
+async def get_visual_templates(
+    category: Optional[str] = Query(None),
+    difficulty: Optional[str] = Query(None),
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get visual strategy templates"""
+    try:
+        # Build query
+        query = """
+            SELECT
+                id, name, description, category, difficulty_level,
+                visual_config, default_parameters,
+                compatible_regions, compatible_brokers
+            FROM visual_strategy_templates
+            WHERE is_active = true
+        """
+
+        params = {}
+
+        if category:
+            query += " AND category = :category"
+            params['category'] = category
+
+        if difficulty:
+            query += " AND difficulty_level = :difficulty"
+            params['difficulty'] = difficulty
+
+        query += " ORDER BY usage_count DESC, name ASC"
+
+        result = await db.execute(text(query), params)
+
+        templates = []
+        for row in result.fetchall():
+            templates.append({
+                'id': str(row.id),
+                'name': row.name,
+                'description': row.description,
+                'category': row.category,
+                'difficulty_level': row.difficulty_level,
+                'visual_config': row.visual_config,
+                'default_parameters': row.default_parameters,
+                'compatible_regions': row.compatible_regions,
+                'compatible_brokers': row.compatible_brokers
+            })
+
+        return APIResponse(success=True, data=templates)
+
+    except Exception as e:
+        logger.error(f"Failed to get visual templates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/visual-templates/{template_id}/use", response_model=APIResponse)
+async def use_visual_template(
+    template_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """Increment usage count for a template and return its configuration"""
+    try:
+        # Get template
+        result = await db.execute(text("""
+            SELECT visual_config, default_parameters, name
+            FROM visual_strategy_templates
+            WHERE id = :template_id AND is_active = true
+        """), {"template_id": template_id})
+
+        template = result.fetchone()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # Increment usage count
+        await db.execute(text("""
+            UPDATE visual_strategy_templates
+            SET usage_count = usage_count + 1
+            WHERE id = :template_id
+        """), {"template_id": template_id})
+
+        await db.commit()
+
+        return APIResponse(
+            success=True,
+            data={
+                'name': template.name,
+                'visual_config': template.visual_config,
+                'default_parameters': template.default_parameters
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to use visual template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

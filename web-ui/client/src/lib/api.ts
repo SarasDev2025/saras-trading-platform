@@ -385,6 +385,38 @@ export const algorithmAPI = {
     const response = await api.get<APIResponse>('/api/v1/algorithms/dashboard');
     return response.data;
   },
+
+  // Visual/No-Code Algorithm Methods
+  getVisualBlocks: async () => {
+    const response = await api.get<APIResponse>('/api/v1/algorithms/visual-blocks');
+    return response.data;
+  },
+
+  compileVisualAlgorithm: async (visual_config: any) => {
+    const response = await api.post<APIResponse>('/api/v1/algorithms/visual/compile', visual_config);
+    return response.data;
+  },
+
+  validateVisualAlgorithm: async (visual_config: any) => {
+    const response = await api.post<APIResponse>('/api/v1/algorithms/visual/validate', visual_config);
+    return response.data;
+  },
+
+  getVisualTemplates: async (category?: string, difficulty?: string) => {
+    let url = '/api/v1/algorithms/visual-templates';
+    const params = [];
+    if (category) params.push(`category=${category}`);
+    if (difficulty) params.push(`difficulty=${difficulty}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+
+    const response = await api.get<APIResponse>(url);
+    return response.data;
+  },
+
+  useVisualTemplate: async (template_id: string) => {
+    const response = await api.post<APIResponse>(`/api/v1/algorithms/visual-templates/${template_id}/use`);
+    return response.data;
+  },
 };
 
 export default api;

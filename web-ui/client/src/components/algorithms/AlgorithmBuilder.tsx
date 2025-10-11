@@ -9,7 +9,8 @@ import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Code, Play, Save, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Code, Play, Save, AlertCircle, CheckCircle2, Loader2, Blocks } from 'lucide-react';
+import { NoCodeAlgorithmBuilder } from './NoCodeAlgorithmBuilder';
 
 interface AlgorithmBuilderProps {
   algorithm?: any;
@@ -50,6 +51,9 @@ for symbol, data in market_data.items():
 `;
 
 export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuilderProps) {
+  const [builderMode, setBuilderMode] = useState<'code' | 'visual'>(
+    algorithm?.builder_type || 'code'
+  );
   const [name, setName] = useState(algorithm?.name || '');
   const [strategyCode, setStrategyCode] = useState(algorithm?.strategy_code || DEFAULT_TEMPLATE);
   const [autoRun, setAutoRun] = useState(algorithm?.auto_run || false);
@@ -105,17 +109,44 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
     setParameters({ ...parameters, [key]: value });
   };
 
+  // If visual mode, show NoCodeAlgorithmBuilder
+  if (builderMode === 'visual') {
+    return <NoCodeAlgorithmBuilder algorithm={algorithm} onSave={onSave} onCancel={onCancel} />;
+  }
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Code className="h-5 w-5" />
-            {algorithm ? 'Edit Algorithm' : 'Create Algorithm'}
-          </CardTitle>
-          <CardDescription>
-            Build your custom trading algorithm with Python
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Code className="h-5 w-5" />
+                {algorithm ? 'Edit Algorithm' : 'Create Algorithm'}
+              </CardTitle>
+              <CardDescription>
+                Build your custom trading algorithm with Python
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={builderMode === 'code' ? 'default' : 'outline' as const}
+                size="sm"
+                onClick={() => setBuilderMode('code')}
+              >
+                <Code className="h-4 w-4 mr-1" />
+                Code
+              </Button>
+              <Button
+                variant={builderMode === 'visual' ? 'default' : 'outline' as const}
+                size="sm"
+                onClick={() => setBuilderMode('visual')}
+              >
+                <Blocks className="h-4 w-4 mr-1" />
+                Visual
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="code" className="w-full">

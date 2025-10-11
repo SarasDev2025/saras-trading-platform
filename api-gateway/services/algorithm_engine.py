@@ -63,7 +63,7 @@ class AlgorithmEngine:
                 SELECT
                     id, user_id, name, strategy_code, parameters, status,
                     allowed_regions, allowed_trading_modes, target_broker,
-                    max_positions, risk_per_trade
+                    max_positions, risk_per_trade, stock_universe
                 FROM trading_algorithms
                 WHERE id = :algorithm_id AND user_id = :user_id
             """), {"algorithm_id": str(algorithm_id), "user_id": str(user_id)})
@@ -151,7 +151,13 @@ class AlgorithmEngine:
             execution_id = execution_result.scalar()
             await db.commit()
 
-            # 7. Execute algorithm code
+            # 7. Parse stock universe
+            import json
+            stock_universe = algo.stock_universe or {"type": "all", "symbols": [], "filters": {}}
+            if isinstance(stock_universe, str):
+                stock_universe = json.loads(stock_universe)
+
+            # 8. Execute algorithm code
             logger.info(f"Executing algorithm {algo.name} for user {user_id} via {broker}")
 
             signals = await AlgorithmEngine._run_algorithm_code(
@@ -163,7 +169,8 @@ class AlgorithmEngine:
                 broker=broker,
                 trading_mode=user_trading_mode,
                 max_positions=algo.max_positions,
-                risk_per_trade=algo.risk_per_trade
+                risk_per_trade=algo.risk_per_trade,
+                stock_universe=stock_universe
             )
 
             # 8. Update execution record
@@ -305,7 +312,8 @@ class AlgorithmEngine:
         broker: str,
         trading_mode: str,
         max_positions: int,
-        risk_per_trade: Decimal
+        risk_per_trade: Decimal,
+        stock_universe: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
         Execute algorithm code in a sandboxed environment
@@ -323,7 +331,7 @@ class AlgorithmEngine:
         positions = await AlgorithmEngine._get_current_positions(db, portfolio_id)
 
         # Get market data (simplified - in production, fetch from broker API)
-        market_data = await AlgorithmEngine._get_market_data(db, broker, trading_mode)
+        market_data = await AlgorithmEngine._get_market_data(db, broker, trading_mode, stock_universe)
 
         # Prepare context for algorithm
         context = {
@@ -408,7 +416,8 @@ class AlgorithmEngine:
     async def _get_market_data(
         db: AsyncSession,
         broker: str,
-        trading_mode: str
+        trading_mode: str,
+        stock_universe: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Get market data for algorithm
@@ -424,19 +433,37 @@ class AlgorithmEngine:
             # US stocks
             region_filter = 'US'
 
-        result = await db.execute(text("""
-            SELECT
-                symbol,
-                name,
-                current_price,
-                exchange,
-                asset_type
-            FROM assets
-            WHERE region = :region
-            AND asset_type = 'STOCK'
-            ORDER BY symbol
-            LIMIT 100
-        """), {"region": region_filter})
+        # Build query based on stock universe
+        if stock_universe['type'] == 'specific' and stock_universe.get('symbols'):
+            # Filter by specific symbols
+            result = await db.execute(text("""
+                SELECT
+                    symbol,
+                    name,
+                    current_price,
+                    exchange,
+                    asset_type
+                FROM assets
+                WHERE region = :region
+                AND asset_type = 'STOCK'
+                AND symbol = ANY(:symbols)
+                ORDER BY symbol
+            """), {"region": region_filter, "symbols": stock_universe['symbols']})
+        else:
+            # Get all available stocks
+            result = await db.execute(text("""
+                SELECT
+                    symbol,
+                    name,
+                    current_price,
+                    exchange,
+                    asset_type
+                FROM assets
+                WHERE region = :region
+                AND asset_type = 'STOCK'
+                ORDER BY symbol
+                LIMIT 100
+            """), {"region": region_filter})
 
         market_data = {}
         for row in result.fetchall():

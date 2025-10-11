@@ -15,11 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 try:
     import pandas as pd
     import numpy as np
-    import pandas_ta as ta
     PANDAS_AVAILABLE = True
 except ImportError:
     PANDAS_AVAILABLE = False
     logging.warning("pandas not available - backtesting will be limited")
+
+# Import data provider factory
+from .data_providers import DataProviderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ class BacktestingService:
             algo_result = await db.execute(text("""
                 SELECT
                     id, name, strategy_code, parameters,
-                    allowed_regions, target_broker
+                    allowed_regions, target_broker, stock_universe
                 FROM trading_algorithms
                 WHERE id = :algorithm_id AND user_id = :user_id
             """), {"algorithm_id": str(algorithm_id), "user_id": str(user_id)})
@@ -80,14 +82,19 @@ class BacktestingService:
             # 3. Determine broker for historical data
             broker = algo.target_broker or ('zerodha' if region == 'IN' else 'alpaca')
 
+            # 4. Parse stock universe
+            stock_universe = algo.stock_universe or {"type": "all", "symbols": [], "filters": {}}
+            if isinstance(stock_universe, str):
+                stock_universe = json.loads(stock_universe)
+
             logger.info(
                 f"Starting backtest for {algo.name} from {start_date} to {end_date} "
-                f"with ${initial_capital} initial capital (broker: {broker})"
+                f"with ${initial_capital} initial capital (broker: {broker}, universe: {stock_universe['type']})"
             )
 
-            # 4. Get historical market data
+            # 5. Get historical market data (filtered by stock universe)
             historical_data = await BacktestingService._get_historical_data(
-                db, broker, region, start_date, end_date
+                db, broker, region, start_date, end_date, stock_universe
             )
 
             if not historical_data:
@@ -169,13 +176,26 @@ class BacktestingService:
             result_id = backtest_result.scalar()
             await db.commit()
 
+            # Prepare price data for charting (convert DataFrames to JSON-serializable format)
+            price_data = {}
+            for symbol, df in historical_data.items():
+                # Convert DataFrame to list of dicts for JSON serialization
+                # Make a copy and convert date column to ISO format string
+                df_copy = df.copy()
+                df_copy['date'] = df_copy['date'].dt.strftime('%Y-%m-%d')
+                price_data[symbol] = df_copy.to_dict('records')
+
             return {
                 "success": True,
                 "backtest_id": str(result_id),
-                "metrics": metrics,
+                **metrics,  # Flatten metrics to top level for frontend compatibility
                 "equity_curve": simulation_results['equity_curve'],
+                "trades": simulation_results['trades'],  # Include all trades for signal visualization
+                "price_data": price_data,  # Include OHLCV data for price charts
                 "trade_count": len(simulation_results['trades']),
-                "broker": broker
+                "broker": broker,
+                # Add alias for compatibility with frontend expecting 'final_portfolio_value'
+                "final_portfolio_value": metrics['final_capital']
             }
 
         except Exception as e:
@@ -189,54 +209,75 @@ class BacktestingService:
         broker: str,
         region: str,
         start_date: date,
-        end_date: date
+        end_date: date,
+        stock_universe: Dict[str, Any]
     ) -> Dict[str, pd.DataFrame]:
         """
-        Get historical price data for backtesting
+        Get historical price data for backtesting using data provider abstraction
 
-        In production, this would fetch from broker APIs
-        For now, generates synthetic data based on current prices
+        Uses DataProviderFactory to select appropriate data source
+        (Yahoo Finance, Alpaca, Zerodha, or synthetic fallback)
         """
-        # Get assets for the region
-        result = await db.execute(text("""
-            SELECT symbol, current_price
-            FROM assets
-            WHERE region = :region
-            AND asset_type = 'STOCK'
-            AND current_price > 0
-            ORDER BY symbol
-            LIMIT 50
-        """), {"region": region})
+        # Determine which symbols to fetch
+        if stock_universe['type'] == 'specific' and stock_universe.get('symbols'):
+            # User specified exact symbols
+            symbols_to_fetch = stock_universe['symbols']
+        else:
+            # Get available symbols from database
+            result = await db.execute(text("""
+                SELECT symbol
+                FROM assets
+                WHERE region = :region
+                AND asset_type = 'STOCK'
+                AND current_price > 0
+                ORDER BY symbol
+                LIMIT 50
+            """), {"region": region})
 
-        historical_data = {}
+            symbols_to_fetch = [row.symbol for row in result.fetchall()]
 
-        # Generate synthetic historical data
-        # In production, replace with actual API calls to broker
-        for row in result.fetchall():
-            symbol = row.symbol
-            current_price = float(row.current_price)
+        if not symbols_to_fetch:
+            logger.warning(f"No symbols found for region {region}")
+            return {}
 
-            # Generate daily prices with random walk
-            days = (end_date - start_date).days + 1
-            dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        logger.info(f"Fetching historical data for {len(symbols_to_fetch)} symbols from {start_date} to {end_date}")
 
-            # Simple random walk for demo purposes
-            np.random.seed(hash(symbol) % 2**32)
-            returns = np.random.normal(0.0005, 0.02, days)
-            prices = current_price * np.exp(np.cumsum(returns))
+        # Create data provider using factory
+        try:
+            provider = DataProviderFactory.create_provider(
+                broker=broker,
+                region=region,
+                config={'region': region}
+            )
 
-            df = pd.DataFrame({
-                'date': dates[:len(prices)],
-                'open': prices * (1 + np.random.uniform(-0.01, 0.01, len(prices))),
-                'high': prices * (1 + np.random.uniform(0, 0.02, len(prices))),
-                'low': prices * (1 - np.random.uniform(0, 0.02, len(prices))),
-                'close': prices,
-                'volume': np.random.randint(100000, 10000000, len(prices))
-            })
+            logger.info(f"Using data provider: {provider.__class__.__name__}")
 
-            historical_data[symbol] = df
+            # Fetch historical data
+            historical_data = await provider.get_historical_data(
+                symbols=symbols_to_fetch,
+                start_date=start_date,
+                end_date=end_date,
+                region=region
+            )
 
-        return historical_data
+            if not historical_data:
+                logger.warning("No historical data returned from provider")
+
+            return historical_data
+
+        except Exception as e:
+            logger.error(f"Error fetching historical data: {e}. Falling back to synthetic provider.")
+
+            # Fallback to synthetic provider
+            from .data_providers import SyntheticDataProvider
+            provider = SyntheticDataProvider()
+
+            return await provider.get_historical_data(
+                symbols=symbols_to_fetch,
+                start_date=start_date,
+                end_date=end_date,
+                region=region
+            )
 
     @staticmethod
     async def _run_simulation(

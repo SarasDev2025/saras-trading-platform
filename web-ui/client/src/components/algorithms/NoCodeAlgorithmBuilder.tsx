@@ -48,6 +48,14 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
   const [maxPositions, setMaxPositions] = useState(algorithm?.max_positions || 5);
   const [riskPerTrade, setRiskPerTrade] = useState(algorithm?.risk_per_trade || 2);
 
+  // Stock universe configuration
+  const [stockUniverseType, setStockUniverseType] = useState<'all' | 'specific'>(
+    algorithm?.stock_universe?.type || 'all'
+  );
+  const [selectedSymbols, setSelectedSymbols] = useState<string>(
+    algorithm?.stock_universe?.symbols?.join(', ') || ''
+  );
+
   const [availableBlocks, setAvailableBlocks] = useState<any>(null);
   const [compiledCode, setCompiledCode] = useState<string>('');
   const [showPreview, setShowPreview] = useState(false);
@@ -152,11 +160,23 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
         position_sizing: positionSizing,
       };
 
+      // Parse selected symbols
+      const symbolsList = stockUniverseType === 'specific'
+        ? selectedSymbols.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : [];
+
+      const stockUniverse = {
+        type: stockUniverseType,
+        symbols: symbolsList,
+        filters: {}
+      };
+
       await onSave({
         id: algorithm?.id,
         name,
         builder_type: 'visual',
         visual_config: visualConfig,
+        stock_universe: stockUniverse,
         max_positions: maxPositions,
         risk_per_trade: riskPerTrade,
       });
@@ -363,6 +383,45 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
                         value={riskPerTrade}
                         onChange={(e) => setRiskPerTrade(parseFloat(e.target.value))}
                       />
+                    </div>
+
+                    <div className="space-y-3 pt-4 border-t">
+                      <div className="space-y-2">
+                        <Label>Stock Universe</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Select which stocks this algorithm will trade
+                        </p>
+                        <Select
+                          value={stockUniverseType}
+                          onValueChange={(value: 'all' | 'specific') =>
+                            setStockUniverseType(value)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Available Stocks</SelectItem>
+                            <SelectItem value="specific">Specific Symbols</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {stockUniverseType === 'specific' && (
+                        <div className="space-y-2">
+                          <Label>Stock Symbols (comma-separated)</Label>
+                          <Input
+                            placeholder="e.g., AAPL, MSFT, GOOGL"
+                            value={selectedSymbols}
+                            onChange={(e) => setSelectedSymbols(e.target.value)}
+                          />
+                          {selectedSymbols && (
+                            <p className="text-sm text-muted-foreground">
+                              Trading {selectedSymbols.split(',').filter(s => s.trim()).length} symbols: {selectedSymbols}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </TabsContent>

@@ -19,7 +19,7 @@ python-dotenv==1.0.0
 asyncpg==0.29.0
 sqlalchemy[asyncio]==2.0.23
 redis[hiredis]==5.0.1
-websockets==12.0
+websockets>=13.0
 aiofiles==23.2.1
 python-jose[cryptography]==3.3.0
 bcrypt==4.0.1
@@ -31,7 +31,8 @@ pytz>=2024.1
 # Algorithmic Trading Dependencies
 pandas>=2.0.0
 numpy>=1.24.0
-# pandas-ta is not available on PyPI, install manually if needed: pip install git+https://github.com/twopirllc/pandas-ta.git
+yfinance>=0.2.28
+# pandas-ta can be added later if needed: pip install git+https://github.com/twopirllc/pandas-ta.git
 backtrader>=1.9.76.123
 schedule>=1.2.0
 RestrictedPython>=6.2

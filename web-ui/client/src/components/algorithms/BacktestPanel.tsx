@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Activity, DollarSign, Target, BarChart3, Loader2, AlertCircle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { PriceChartWithSignals } from './PriceChartWithSignals';
 
 interface BacktestPanelProps {
   algorithmId: string;
@@ -35,7 +36,7 @@ export function BacktestPanel({ algorithmId }: BacktestPanelProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          Authorization: `Bearer ${localStorage.getItem('access_token')}`,
         },
         body: JSON.stringify({
           start_date: startDate,
@@ -190,11 +191,12 @@ export function BacktestPanel({ algorithmId }: BacktestPanelProps) {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="overview" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="returns">Returns</TabsTrigger>
                 <TabsTrigger value="risk">Risk</TabsTrigger>
                 <TabsTrigger value="trades">Trades</TabsTrigger>
+                <TabsTrigger value="signals">Price & Signals</TabsTrigger>
               </TabsList>
 
               <TabsContent value="overview" className="space-y-4">
@@ -361,6 +363,28 @@ export function BacktestPanel({ algorithmId }: BacktestPanelProps) {
                     <p className="text-lg font-bold">{results.longest_winning_streak}</p>
                   </div>
                 </div>
+              </TabsContent>
+
+              <TabsContent value="signals" className="space-y-4">
+                {results.price_data && results.trades ? (
+                  <div className="space-y-6">
+                    {Object.entries(results.price_data).map(([symbol, priceData]: [string, any]) => (
+                      <PriceChartWithSignals
+                        key={symbol}
+                        symbol={symbol}
+                        priceData={priceData}
+                        trades={results.trades}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      No price or trade data available for visualization.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>

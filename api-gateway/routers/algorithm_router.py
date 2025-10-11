@@ -44,6 +44,7 @@ class CreateAlgorithmRequest(BaseModel):
     allowed_regions: List[str] = Field(default_factory=lambda: ['IN', 'US'])
     allowed_trading_modes: List[str] = Field(default_factory=lambda: ['paper', 'live'])
     target_broker: Optional[str] = None
+    stock_universe: Optional[Dict[str, Any]] = Field(default=None)
 
 
 class UpdateAlgorithmRequest(BaseModel):
@@ -55,6 +56,7 @@ class UpdateAlgorithmRequest(BaseModel):
     execution_interval: Optional[str] = None
     max_positions: Optional[int] = None
     risk_per_trade: Optional[float] = None
+    stock_universe: Optional[Dict[str, Any]] = None
 
 
 class BacktestRequest(BaseModel):
@@ -122,13 +124,13 @@ async def create_algorithm(
                 user_id, name, description, language, builder_type, strategy_code,
                 visual_config, parameters, auto_run, execution_interval,
                 max_positions, risk_per_trade, allowed_regions, allowed_trading_modes,
-                target_broker, status
+                target_broker, stock_universe, status
             )
             VALUES (
                 :user_id, :name, :description, :language, :builder_type, :strategy_code,
                 :visual_config, :parameters, :auto_run, :execution_interval,
                 :max_positions, :risk_per_trade, :allowed_regions, :allowed_trading_modes,
-                :target_broker, 'inactive'
+                :target_broker, :stock_universe, 'inactive'
             )
             RETURNING id, name, status, builder_type, created_at
         """), {
@@ -146,7 +148,8 @@ async def create_algorithm(
             "risk_per_trade": request.risk_per_trade,
             "allowed_regions": request.allowed_regions,
             "allowed_trading_modes": request.allowed_trading_modes,
-            "target_broker": request.target_broker
+            "target_broker": request.target_broker,
+            "stock_universe": json.dumps(request.stock_universe) if request.stock_universe else None
         })
 
         algo = result.fetchone()
@@ -454,6 +457,7 @@ async def get_algorithm(
                 id, name, description, language, strategy_code, parameters,
                 auto_run, execution_interval, max_positions, risk_per_trade,
                 allowed_regions, allowed_trading_modes, target_broker,
+                builder_type, visual_config, stock_universe,
                 status, last_run_at, last_error,
                 total_executions, successful_executions,
                 created_at, updated_at
@@ -472,7 +476,10 @@ async def get_algorithm(
                 "name": algo.name,
                 "description": algo.description,
                 "language": algo.language,
+                "builder_type": algo.builder_type,
                 "strategy_code": algo.strategy_code,
+                "visual_config": algo.visual_config,
+                "stock_universe": algo.stock_universe,
                 "parameters": algo.parameters,
                 "auto_run": algo.auto_run,
                 "execution_interval": algo.execution_interval,
@@ -549,6 +556,10 @@ async def update_algorithm(
         if request.risk_per_trade is not None:
             updates.append("risk_per_trade = :risk_per_trade")
             params["risk_per_trade"] = request.risk_per_trade
+
+        if request.stock_universe is not None:
+            updates.append("stock_universe = :stock_universe")
+            params["stock_universe"] = json.dumps(request.stock_universe)
 
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")

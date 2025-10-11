@@ -15,11 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.algorithm_engine import AlgorithmEngine
 from services.signal_processor import SignalProcessor
 from database import get_db_session
+from schedulers.flexible_scheduler import FlexibleSchedulerMixin
 
 logger = logging.getLogger(__name__)
 
 
-class AlgorithmScheduler:
+class AlgorithmScheduler(FlexibleSchedulerMixin):
     """Background scheduler for automated algorithm execution"""
 
     # Market hours (local time)
@@ -92,12 +93,25 @@ class AlgorithmScheduler:
                         a.name,
                         a.execution_interval,
                         a.last_run_at,
+                        a.scheduling_type,
+                        a.execution_time_windows,
+                        a.execution_times,
+                        a.run_continuously,
+                        a.run_duration_type,
+                        a.run_duration_value,
+                        a.run_start_date,
+                        a.run_end_date,
+                        a.auto_stop_on_loss,
+                        a.auto_stop_loss_threshold,
+                        a.currently_executing,
+                        a.created_at,
                         u.region,
                         u.trading_mode
                     FROM trading_algorithms a
                     JOIN users u ON a.user_id = u.id
                     WHERE a.status = 'active'
                     AND a.auto_run = true
+                    AND (a.currently_executing = false OR a.currently_executing IS NULL)
                 """))
 
                 algorithms = result.fetchall()
@@ -113,9 +127,31 @@ class AlgorithmScheduler:
                         if not self._is_market_open(algo.region):
                             continue
 
-                        # Check if algorithm should run based on interval
-                        if not self._should_run_now(algo.execution_interval, algo.last_run_at):
+                        # Check duration-based auto-stop
+                        if await self._should_auto_stop_duration(algo):
+                            await self._auto_stop_algorithm(
+                                db, algo.id,
+                                f"Duration limit reached ({algo.run_duration_type}: {algo.run_duration_value})"
+                            )
                             continue
+
+                        # Check loss-based auto-stop
+                        if await self._should_stop_due_to_losses(db, algo):
+                            await self._auto_stop_algorithm(
+                                db, algo.id,
+                                f"Loss threshold exceeded (${algo.auto_stop_loss_threshold})"
+                            )
+                            continue
+
+                        # Get market config for scheduling
+                        market_config = self.MARKET_HOURS.get(algo.region, self.MARKET_HOURS['US'])
+
+                        # Check if algorithm should run based on scheduling configuration
+                        if not self._should_run_based_on_schedule(algo, market_config):
+                            continue
+
+                        # Mark as currently executing
+                        await self._mark_executing(db, algo.id, True)
 
                         # Execute algorithm
                         logger.info(
@@ -150,10 +186,18 @@ class AlgorithmScheduler:
                             user_id=algo.user_id
                         )
 
+                        # Mark execution complete
+                        await self._mark_executing(db, algo.id, False)
+
+                        # Update next scheduled run time
+                        await self._update_next_scheduled_run(db, algo)
+
                     except Exception as e:
                         logger.error(
                             f"Failed to execute algorithm {algo.id} ({algo.name}): {e}"
                         )
+                        # Mark execution complete even on error
+                        await self._mark_executing(db, algo.id, False)
                         continue
 
             except Exception as e:

@@ -20,6 +20,16 @@ export function RuleBlock({
   onRemove,
   showLogicalOperator = false,
 }: RuleBlockProps) {
+  // Debug: Log when component renders with crossover condition
+  if (condition.type === 'indicator_crossover') {
+    console.log('RuleBlock crossover condition:', {
+      indicator1: condition.indicator1,
+      indicator2: condition.indicator2,
+      hasBlocks: !!availableBlocks,
+      indicatorCount: availableBlocks?.indicators?.length
+    });
+  }
+
   const conditionTypes = [
     { value: 'indicator_comparison', label: 'Indicator Comparison' },
     { value: 'price_comparison', label: 'Price Comparison' },
@@ -36,18 +46,18 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Indicator</Label>
                 <Select
-                  value={condition.indicator}
+                  value={condition.indicator || undefined}
                   onValueChange={(value) => onChange({ indicator: value })}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select indicator" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.indicators.map((ind: any) => (
+                    {availableBlocks?.indicators?.map((ind: any) => (
                       <SelectItem key={ind.id} value={ind.id}>
                         {ind.name}
                       </SelectItem>
-                    ))}
+                    )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -55,18 +65,18 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Operator</Label>
                 <Select
-                  value={condition.operator}
+                  value={condition.operator || undefined}
                   onValueChange={(value) => onChange({ operator: value })}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select operator" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.comparisons.map((comp: any) => (
+                    {availableBlocks?.comparisons?.map((comp: any) => (
                       <SelectItem key={comp.id} value={comp.id}>
                         {comp.name}
                       </SelectItem>
-                    ))}
+                    )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -105,18 +115,18 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Compare Price To</Label>
                 <Select
-                  value={condition.reference}
+                  value={condition.reference || undefined}
                   onValueChange={(value) => onChange({ reference: value })}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select reference" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.references.map((ref: any) => (
+                    {availableBlocks?.references?.map((ref: any) => (
                       <SelectItem key={ref.id} value={ref.id}>
                         {ref.name}
                       </SelectItem>
-                    ))}
+                    )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -124,18 +134,18 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Operator</Label>
                 <Select
-                  value={condition.operator}
+                  value={condition.operator || undefined}
                   onValueChange={(value) => onChange({ operator: value })}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select operator" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.comparisons.map((comp: any) => (
+                    {availableBlocks?.comparisons?.map((comp: any) => (
                       <SelectItem key={comp.id} value={comp.id}>
                         {comp.name}
                       </SelectItem>
-                    ))}
+                    )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -186,20 +196,28 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Fast Indicator</Label>
                 <Select
-                  value={condition.indicator1}
-                  onValueChange={(value) => onChange({ indicator1: value })}
+                  value={condition.indicator1 || ''}
+                  onValueChange={(value) => {
+                    console.log('Fast indicator changed to:', value, 'current:', condition.indicator1);
+                    onChange({ indicator1: value });
+                  }}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select fast indicator">
+                      {condition.indicator1 && (
+                        availableBlocks?.indicators
+                          ?.find((ind: any) => ind.id === condition.indicator1)?.name || condition.indicator1
+                      )}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.indicators
-                      .filter((ind: any) => ind.id !== 'VOLUME')
+                    {availableBlocks?.indicators
+                      ?.filter((ind: any) => ind.id !== 'VOLUME')
                       .map((ind: any) => (
                         <SelectItem key={ind.id} value={ind.id}>
                           {ind.name}
                         </SelectItem>
-                      ))}
+                      )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -220,20 +238,28 @@ export function RuleBlock({
               <div className="space-y-1">
                 <Label className="text-xs">Slow Indicator</Label>
                 <Select
-                  value={condition.indicator2}
-                  onValueChange={(value) => onChange({ indicator2: value })}
+                  value={condition.indicator2 || ''}
+                  onValueChange={(value) => {
+                    console.log('Slow indicator changed to:', value, 'current:', condition.indicator2);
+                    onChange({ indicator2: value });
+                  }}
                 >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select slow indicator">
+                      {condition.indicator2 && (
+                        availableBlocks?.indicators
+                          ?.find((ind: any) => ind.id === condition.indicator2)?.name || condition.indicator2
+                      )}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBlocks.indicators
-                      .filter((ind: any) => ind.id !== 'VOLUME')
+                    {availableBlocks?.indicators
+                      ?.filter((ind: any) => ind.id !== 'VOLUME')
                       .map((ind: any) => (
                         <SelectItem key={ind.id} value={ind.id}>
                           {ind.name}
                         </SelectItem>
-                      ))}
+                      )) || []}
                   </SelectContent>
                 </Select>
               </div>
@@ -274,18 +300,18 @@ export function RuleBlock({
             <div className="space-y-1">
               <Label className="text-xs">Operator</Label>
               <Select
-                value={condition.operator}
+                value={condition.operator || undefined}
                 onValueChange={(value) => onChange({ operator: value })}
               >
                 <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Select" />
+                  <SelectValue placeholder="Select operator" />
                 </SelectTrigger>
                 <SelectContent>
-                  {availableBlocks.comparisons.map((comp: any) => (
+                  {availableBlocks?.comparisons?.map((comp: any) => (
                     <SelectItem key={comp.id} value={comp.id}>
                       {comp.name}
                     </SelectItem>
-                  ))}
+                  )) || []}
                 </SelectContent>
               </Select>
             </div>

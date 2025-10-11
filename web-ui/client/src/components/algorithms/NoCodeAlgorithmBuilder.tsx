@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Blocks, Plus, Trash2, Eye, Save, Loader2, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import { RuleBlock } from './RuleBlock';
 import { StrategyTemplateSelector } from './StrategyTemplateSelector';
+import { AdvancedSchedulingPanel } from './AdvancedSchedulingPanel';
 
 interface NoCodeAlgorithmBuilderProps {
   algorithm?: any;
@@ -55,6 +56,21 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
   const [selectedSymbols, setSelectedSymbols] = useState<string>(
     algorithm?.stock_universe?.symbols?.join(', ') || ''
   );
+
+  // Scheduling configuration
+  const [schedulingConfig, setSchedulingConfig] = useState({
+    scheduling_type: algorithm?.scheduling_type || 'interval',
+    execution_interval: algorithm?.execution_interval || '5min',
+    execution_time_windows: algorithm?.execution_time_windows || [],
+    execution_times: algorithm?.execution_times || [],
+    run_continuously: algorithm?.run_continuously || false,
+    run_duration_type: algorithm?.run_duration_type || 'forever',
+    run_duration_value: algorithm?.run_duration_value,
+    run_start_date: algorithm?.run_start_date,
+    run_end_date: algorithm?.run_end_date,
+    auto_stop_on_loss: algorithm?.auto_stop_on_loss || false,
+    auto_stop_loss_threshold: algorithm?.auto_stop_loss_threshold
+  });
 
   const [availableBlocks, setAvailableBlocks] = useState<any>(null);
   const [compiledCode, setCompiledCode] = useState<string>('');
@@ -179,6 +195,7 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
         stock_universe: stockUniverse,
         max_positions: maxPositions,
         risk_per_trade: riskPerTrade,
+        ...schedulingConfig,
       });
     } finally {
       setSaving(false);
@@ -253,10 +270,11 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
               </div>
 
               <Tabs defaultValue="entry" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="entry">Entry Rules</TabsTrigger>
                   <TabsTrigger value="exit">Exit Rules</TabsTrigger>
                   <TabsTrigger value="config">Configuration</TabsTrigger>
+                  <TabsTrigger value="schedule">Scheduling</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="entry" className="space-y-4">
@@ -424,6 +442,13 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
                       )}
                     </div>
                   </div>
+                </TabsContent>
+
+                <TabsContent value="schedule" className="space-y-4">
+                  <AdvancedSchedulingPanel
+                    config={schedulingConfig}
+                    onChange={setSchedulingConfig}
+                  />
                 </TabsContent>
               </Tabs>
 

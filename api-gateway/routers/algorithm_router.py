@@ -46,6 +46,22 @@ class CreateAlgorithmRequest(BaseModel):
     target_broker: Optional[str] = None
     stock_universe: Optional[Dict[str, Any]] = Field(default=None)
 
+    # Flexible scheduling fields
+    scheduling_type: str = Field(default='interval')  # 'interval', 'time_windows', 'single_time', 'continuous'
+    execution_time_windows: List[Dict[str, str]] = Field(default_factory=list)  # [{"start": "09:30", "end": "10:30"}]
+    execution_times: List[str] = Field(default_factory=list)  # ["10:00", "14:30"]
+    run_continuously: bool = Field(default=False)
+
+    # Duration controls
+    run_duration_type: str = Field(default='forever')  # 'forever', 'days', 'months', 'years', 'until_date'
+    run_duration_value: Optional[int] = None
+    run_start_date: Optional[datetime] = None
+    run_end_date: Optional[datetime] = None
+
+    # Auto-stop controls
+    auto_stop_on_loss: bool = Field(default=False)
+    auto_stop_loss_threshold: Optional[float] = None
+
 
 class UpdateAlgorithmRequest(BaseModel):
     name: Optional[str] = None
@@ -57,6 +73,22 @@ class UpdateAlgorithmRequest(BaseModel):
     max_positions: Optional[int] = None
     risk_per_trade: Optional[float] = None
     stock_universe: Optional[Dict[str, Any]] = None
+
+    # Flexible scheduling fields
+    scheduling_type: Optional[str] = None
+    execution_time_windows: Optional[List[Dict[str, str]]] = None
+    execution_times: Optional[List[str]] = None
+    run_continuously: Optional[bool] = None
+
+    # Duration controls
+    run_duration_type: Optional[str] = None
+    run_duration_value: Optional[int] = None
+    run_start_date: Optional[datetime] = None
+    run_end_date: Optional[datetime] = None
+
+    # Auto-stop controls
+    auto_stop_on_loss: Optional[bool] = None
+    auto_stop_loss_threshold: Optional[float] = None
 
 
 class BacktestRequest(BaseModel):
@@ -124,13 +156,19 @@ async def create_algorithm(
                 user_id, name, description, language, builder_type, strategy_code,
                 visual_config, parameters, auto_run, execution_interval,
                 max_positions, risk_per_trade, allowed_regions, allowed_trading_modes,
-                target_broker, stock_universe, status
+                target_broker, stock_universe, status,
+                scheduling_type, execution_time_windows, execution_times, run_continuously,
+                run_duration_type, run_duration_value, run_start_date, run_end_date,
+                auto_stop_on_loss, auto_stop_loss_threshold
             )
             VALUES (
                 :user_id, :name, :description, :language, :builder_type, :strategy_code,
                 :visual_config, :parameters, :auto_run, :execution_interval,
                 :max_positions, :risk_per_trade, :allowed_regions, :allowed_trading_modes,
-                :target_broker, :stock_universe, 'inactive'
+                :target_broker, :stock_universe, 'inactive',
+                :scheduling_type, :execution_time_windows, :execution_times, :run_continuously,
+                :run_duration_type, :run_duration_value, :run_start_date, :run_end_date,
+                :auto_stop_on_loss, :auto_stop_loss_threshold
             )
             RETURNING id, name, status, builder_type, created_at
         """), {
@@ -149,7 +187,17 @@ async def create_algorithm(
             "allowed_regions": request.allowed_regions,
             "allowed_trading_modes": request.allowed_trading_modes,
             "target_broker": request.target_broker,
-            "stock_universe": json.dumps(request.stock_universe) if request.stock_universe else None
+            "stock_universe": json.dumps(request.stock_universe) if request.stock_universe else None,
+            "scheduling_type": request.scheduling_type,
+            "execution_time_windows": json.dumps(request.execution_time_windows) if request.execution_time_windows else '[]',
+            "execution_times": json.dumps(request.execution_times) if request.execution_times else '[]',
+            "run_continuously": request.run_continuously,
+            "run_duration_type": request.run_duration_type,
+            "run_duration_value": request.run_duration_value,
+            "run_start_date": request.run_start_date,
+            "run_end_date": request.run_end_date,
+            "auto_stop_on_loss": request.auto_stop_on_loss,
+            "auto_stop_loss_threshold": request.auto_stop_loss_threshold
         })
 
         algo = result.fetchone()
@@ -560,6 +608,49 @@ async def update_algorithm(
         if request.stock_universe is not None:
             updates.append("stock_universe = :stock_universe")
             params["stock_universe"] = json.dumps(request.stock_universe)
+
+        # Flexible scheduling fields
+        if request.scheduling_type is not None:
+            updates.append("scheduling_type = :scheduling_type")
+            params["scheduling_type"] = request.scheduling_type
+
+        if request.execution_time_windows is not None:
+            updates.append("execution_time_windows = :execution_time_windows")
+            params["execution_time_windows"] = json.dumps(request.execution_time_windows)
+
+        if request.execution_times is not None:
+            updates.append("execution_times = :execution_times")
+            params["execution_times"] = json.dumps(request.execution_times)
+
+        if request.run_continuously is not None:
+            updates.append("run_continuously = :run_continuously")
+            params["run_continuously"] = request.run_continuously
+
+        # Duration controls
+        if request.run_duration_type is not None:
+            updates.append("run_duration_type = :run_duration_type")
+            params["run_duration_type"] = request.run_duration_type
+
+        if request.run_duration_value is not None:
+            updates.append("run_duration_value = :run_duration_value")
+            params["run_duration_value"] = request.run_duration_value
+
+        if request.run_start_date is not None:
+            updates.append("run_start_date = :run_start_date")
+            params["run_start_date"] = request.run_start_date
+
+        if request.run_end_date is not None:
+            updates.append("run_end_date = :run_end_date")
+            params["run_end_date"] = request.run_end_date
+
+        # Auto-stop controls
+        if request.auto_stop_on_loss is not None:
+            updates.append("auto_stop_on_loss = :auto_stop_on_loss")
+            params["auto_stop_on_loss"] = request.auto_stop_on_loss
+
+        if request.auto_stop_loss_threshold is not None:
+            updates.append("auto_stop_loss_threshold = :auto_stop_loss_threshold")
+            params["auto_stop_loss_threshold"] = request.auto_stop_loss_threshold
 
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")

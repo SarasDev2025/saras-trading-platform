@@ -9,8 +9,9 @@ import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Code, Play, Save, AlertCircle, CheckCircle2, Loader2, Blocks } from 'lucide-react';
+import { Code, Play, Save, AlertCircle, CheckCircle2, Loader2, Blocks, LineChart } from 'lucide-react';
 import { NoCodeAlgorithmBuilder } from './NoCodeAlgorithmBuilder';
+import { InteractiveChartBuilder } from './InteractiveChartBuilder';
 
 interface AlgorithmBuilderProps {
   algorithm?: any;
@@ -51,7 +52,7 @@ for symbol, data in market_data.items():
 `;
 
 export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuilderProps) {
-  const [builderMode, setBuilderMode] = useState<'code' | 'visual'>(
+  const [builderMode, setBuilderMode] = useState<'code' | 'visual' | 'interactive'>(
     algorithm?.builder_type || 'code'
   );
   const [name, setName] = useState(algorithm?.name || '');
@@ -114,6 +115,11 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
     return <NoCodeAlgorithmBuilder algorithm={algorithm} onSave={onSave} onCancel={onCancel} />;
   }
 
+  // If interactive mode, show InteractiveChartBuilder
+  if (builderMode === 'interactive') {
+    return <InteractiveChartBuilder algorithm={algorithm} onSave={onSave} onCancel={onCancel} />;
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -144,6 +150,14 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
               >
                 <Blocks className="h-4 w-4 mr-1" />
                 Visual
+              </Button>
+              <Button
+                variant={builderMode === 'interactive' ? 'default' : 'outline' as const}
+                size="sm"
+                onClick={() => setBuilderMode('interactive')}
+              >
+                <LineChart className="h-4 w-4 mr-1" />
+                Interactive
               </Button>
             </div>
           </div>

@@ -932,3 +932,399 @@ async def validate_code(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =====================================================
+# Interactive Chart Builder Preview Endpoints
+# =====================================================
+
+class PreviewDataRequest(BaseModel):
+    symbol: str
+    days: int = Field(default=90, ge=7, le=365)
+
+class PreviewSignalsRequest(BaseModel):
+    price_data: List[Dict[str, Any]]
+    entry_conditions: List[Dict[str, Any]]
+    exit_conditions: List[Dict[str, Any]]
+
+@router.get("/visual/preview-data", response_model=APIResponse)
+async def get_preview_data(
+    symbol: str = Query(..., description="Stock symbol"),
+    days: int = Query(90, ge=7, le=365, description="Number of days of historical data"),
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+):
+    """Fetch historical price data with calculated indicators for chart preview"""
+    try:
+        from services.data_providers import DataProviderFactory
+        from datetime import timedelta
+        import pandas as pd
+
+        # Calculate date range
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=days)
+
+        # Get user region for data provider
+        region = current_user.get('region', 'US')
+
+        # Create data provider
+        provider = DataProviderFactory.create_provider(
+            broker='alpaca',
+            region=region,
+            config={'region': region}
+        )
+
+        # Fetch historical data
+        historical_data = await provider.get_historical_data(
+            symbols=[symbol],
+            start_date=start_date,
+            end_date=end_date,
+            region=region
+        )
+
+        if not historical_data or symbol not in historical_data:
+            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+
+        df = historical_data[symbol]
+
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+
+        # Calculate common indicators
+        # RSI
+        if 'close' in df.columns:
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+
+        # SMA
+        if 'close' in df.columns:
+            df['sma_20'] = df['close'].rolling(window=20).mean()
+            df['sma_50'] = df['close'].rolling(window=50).mean()
+
+        # EMA
+        if 'close' in df.columns:
+            df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
+
+        # Convert to JSON-serializable format
+        df_copy = df.copy()
+        df_copy['date'] = df_copy['date'].dt.strftime('%Y-%m-%d')
+        price_data = df_copy.fillna(0).to_dict('records')
+
+        return APIResponse(
+            success=True,
+            data={
+                "symbol": symbol,
+                "price_data": price_data,
+                "data_points": len(price_data)
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch preview data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/visual/preview-signals", response_model=APIResponse)
+async def preview_signals(
+    request: PreviewSignalsRequest,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+):
+    """Simulate signals based on conditions and historical data"""
+    try:
+        import pandas as pd
+
+        # Convert price data to DataFrame
+        df = pd.DataFrame(request.price_data)
+        df['date'] = pd.to_datetime(df['date'])
+
+        # Dynamically calculate any missing indicators based on conditions
+        all_conditions = request.entry_conditions + request.exit_conditions
+        for condition in all_conditions:
+            if condition.get('type') == 'indicator_crossover':
+                # Calculate SMAs/EMAs for crossover conditions
+                indicator1 = condition.get('indicator1')
+                indicator2 = condition.get('indicator2')
+                period1 = condition.get('period1', 20)
+                period2 = condition.get('period2', 50)
+
+                if indicator1 == 'SMA':
+                    col_name = f"sma_{period1}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].rolling(window=period1).mean()
+
+                if indicator2 == 'SMA':
+                    col_name = f"sma_{period2}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].rolling(window=period2).mean()
+
+                if indicator1 == 'EMA':
+                    col_name = f"ema_{period1}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].ewm(span=period1, adjust=False).mean()
+
+                if indicator2 == 'EMA':
+                    col_name = f"ema_{period2}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].ewm(span=period2, adjust=False).mean()
+
+            elif condition.get('type') == 'indicator_comparison':
+                # Calculate indicators for comparison conditions (e.g., RSI < 30)
+                indicator = condition.get('indicator')
+                period = condition.get('period', 14)  # Default period for indicators
+
+                if indicator == 'RSI' and 'rsi' not in df.columns and 'close' in df.columns:
+                    # Calculate RSI
+                    delta = df['close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+                    rs = gain / loss
+                    df['rsi'] = 100 - (100 / (1 + rs))
+
+                elif indicator == 'SMA':
+                    col_name = f"sma_{period}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].rolling(window=period).mean()
+
+                elif indicator == 'EMA':
+                    col_name = f"ema_{period}"
+                    if col_name not in df.columns and 'close' in df.columns:
+                        df[col_name] = df['close'].ewm(span=period, adjust=False).mean()
+
+        signals = []
+        in_position = False  # Track position state to avoid duplicate signals
+
+        # Signal detection logic with position tracking
+        for i in range(1, len(df)):
+            current_row = df.iloc[i]
+            prev_row = df.iloc[i-1]
+
+            # Check entry conditions (only when NOT in position)
+            if not in_position:
+                entry_triggered = evaluate_conditions(
+                    request.entry_conditions,
+                    current_row,
+                    prev_row
+                )
+
+                if entry_triggered:
+                    signals.append({
+                        "date": current_row['date'].strftime('%Y-%m-%d'),
+                        "type": "buy",
+                        "price": float(current_row['close']),
+                        "reason": format_condition_reason(request.entry_conditions)
+                    })
+                    in_position = True  # Mark as in position
+
+            # Check exit conditions (only when IN position)
+            elif in_position:
+                exit_triggered = evaluate_conditions(
+                    request.exit_conditions,
+                    current_row,
+                    prev_row
+                )
+
+                if exit_triggered:
+                    signals.append({
+                        "date": current_row['date'].strftime('%Y-%m-%d'),
+                        "type": "sell",
+                        "price": float(current_row['close']),
+                        "reason": format_condition_reason(request.exit_conditions)
+                    })
+                    in_position = False  # Mark as out of position
+
+        # Calculate basic statistics
+        buy_signals = [s for s in signals if s['type'] == 'buy']
+        sell_signals = [s for s in signals if s['type'] == 'sell']
+
+        # Estimate win rate and return
+        estimated_win_rate = None
+        estimated_return = None
+
+        if len(buy_signals) > 0 and len(sell_signals) > 0:
+            # Pair up buy and sell signals
+            trades = []
+            for i in range(min(len(buy_signals), len(sell_signals))):
+                buy_price = buy_signals[i]['price']
+                sell_price = sell_signals[i]['price']
+                profit_pct = ((sell_price - buy_price) / buy_price) * 100
+                trades.append(profit_pct)
+
+            if trades:
+                winning_trades = [t for t in trades if t > 0]
+                estimated_win_rate = (len(winning_trades) / len(trades)) * 100
+                estimated_return = sum(trades)
+
+        return APIResponse(
+            success=True,
+            data={
+                "signals": signals,
+                "estimated_win_rate": estimated_win_rate,
+                "estimated_return": estimated_return
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to preview signals: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def evaluate_conditions(conditions: List[Dict[str, Any]], current_row, prev_row) -> bool:
+    """Evaluate if conditions are met"""
+    if not conditions:
+        return False
+
+    results = []
+
+    for condition in conditions:
+        cond_type = condition.get('type')
+
+        if cond_type == 'indicator_comparison':
+            indicator = condition.get('indicator')
+            operator = condition.get('operator')
+            value = condition.get('value')
+
+            if indicator and operator and value is not None:
+                indicator_value = current_row.get(indicator.lower())
+                if indicator_value is not None and indicator_value != 0:
+                    if operator == 'below':
+                        results.append(indicator_value < value)
+                    elif operator == 'above':
+                        results.append(indicator_value > value)
+
+        elif cond_type == 'indicator_crossover':
+            indicator1 = condition.get('indicator1')
+            indicator2 = condition.get('indicator2')
+            direction = condition.get('direction')
+
+            if indicator1 and indicator2 and direction:
+                # Get indicator values with period suffixes
+                period1 = condition.get('period1', 20)
+                period2 = condition.get('period2', 50)
+
+                # Try to find the right column name
+                ind1_current = current_row.get(f"{indicator1.lower()}_{period1}") or current_row.get(indicator1.lower())
+                ind2_current = current_row.get(f"{indicator2.lower()}_{period2}") or current_row.get(indicator2.lower())
+                ind1_prev = prev_row.get(f"{indicator1.lower()}_{period1}") or prev_row.get(indicator1.lower())
+                ind2_prev = prev_row.get(f"{indicator2.lower()}_{period2}") or prev_row.get(indicator2.lower())
+
+                if all(v is not None and v != 0 for v in [ind1_current, ind2_current, ind1_prev, ind2_prev]):
+                    if direction == 'above':
+                        # Crosses above: was below, now above
+                        results.append(ind1_prev < ind2_prev and ind1_current > ind2_current)
+                    elif direction == 'below':
+                        # Crosses below: was above, now below
+                        results.append(ind1_prev > ind2_prev and ind1_current < ind2_current)
+
+    # Combine with AND logic (all conditions must be true)
+    return all(results) if results else False
+
+
+def format_condition_reason(conditions: List[Dict[str, Any]]) -> str:
+    """Format conditions into a human-readable reason"""
+    if not conditions:
+        return "No conditions"
+
+    reasons = []
+    for condition in conditions:
+        cond_type = condition.get('type')
+
+        if cond_type == 'indicator_comparison':
+            indicator = condition.get('indicator', 'Unknown')
+            operator = condition.get('operator', 'Unknown')
+            value = condition.get('value', 0)
+            reasons.append(f"{indicator} {operator} {value}")
+
+        elif cond_type == 'indicator_crossover':
+            indicator1 = condition.get('indicator1', 'Unknown')
+            indicator2 = condition.get('indicator2', 'Unknown')
+            direction = condition.get('direction', 'Unknown')
+            reasons.append(f"{indicator1} crosses {direction} {indicator2}")
+
+    return " AND ".join(reasons)
+
+
+@router.post("/visual/suggest-strategies", response_model=APIResponse)
+async def suggest_strategies(
+    symbol: str = Query(..., description="Stock symbol"),
+    days: int = Query(90, ge=7, le=365, description="Number of days of historical data"),
+    style: str = Query('balanced', description="Trading style: conservative, balanced, or aggressive"),
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
+):
+    """Analyze historical data and suggest optimal trading strategies"""
+    try:
+        from services.data_providers import DataProviderFactory
+        from services.strategy_optimizer import StrategyOptimizer
+        from datetime import timedelta
+        import pandas as pd
+
+        logger.info(f"Generating strategy suggestions for {symbol} ({days} days, {style} style)")
+
+        # Calculate date range
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=days)
+
+        # Get user region for data provider
+        region = current_user.get('region', 'US')
+
+        # Create data provider
+        provider = DataProviderFactory.create_provider(
+            broker='alpaca',
+            region=region,
+            config={'region': region}
+        )
+
+        # Fetch historical data
+        historical_data = await provider.get_historical_data(
+            symbols=[symbol],
+            start_date=start_date,
+            end_date=end_date,
+            region=region
+        )
+
+        if not historical_data or symbol not in historical_data:
+            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+
+        df = historical_data[symbol]
+
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+
+        # Calculate indicators
+        if 'close' in df.columns:
+            # RSI
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+
+            # SMA
+            df['sma_20'] = df['close'].rolling(window=20).mean()
+            df['sma_50'] = df['close'].rolling(window=50).mean()
+
+            # EMA
+            df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
+
+        # Analyze and suggest strategies
+        result = StrategyOptimizer.analyze_and_suggest_strategies(
+            df=df,
+            symbol=symbol,
+            style=style,
+            top_n=5
+        )
+
+        return APIResponse(
+            success=True,
+            data=result,
+            message=f"Generated {len(result['suggestions'])} strategy suggestions"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to suggest strategies: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+

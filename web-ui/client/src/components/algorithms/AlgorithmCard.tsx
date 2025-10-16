@@ -20,6 +20,9 @@ import {
   Clock,
   BarChart3,
   Code,
+  Calendar,
+  AlertTriangle,
+  Timer,
 } from 'lucide-react';
 
 interface AlgorithmCardProps {
@@ -62,6 +65,33 @@ export function AlgorithmCard({
       manual: 'Manual',
     };
     return intervalMap[interval] || interval;
+  };
+
+  const getSchedulingTypeBadge = (schedulingType: string) => {
+    const typeMap: Record<string, string> = {
+      interval: 'Interval',
+      time_windows: 'Time Windows',
+      single_time: 'Scheduled',
+      continuous: 'Continuous',
+    };
+    return typeMap[schedulingType] || 'Interval';
+  };
+
+  const getDurationText = (algorithm: any) => {
+    if (!algorithm.run_duration_type || algorithm.run_duration_type === 'forever') {
+      return 'Indefinite';
+    }
+
+    if (algorithm.run_duration_type === 'until_date' && algorithm.run_end_date) {
+      const endDate = new Date(algorithm.run_end_date);
+      return `Until ${endDate.toLocaleDateString()}`;
+    }
+
+    if (algorithm.run_duration_value) {
+      return `${algorithm.run_duration_value} ${algorithm.run_duration_type}`;
+    }
+
+    return 'Limited';
   };
 
   const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
@@ -199,16 +229,66 @@ export function AlgorithmCard({
             </Button>
           </div>
 
-          {/* Auto-run indicator */}
+          {/* Scheduling Information */}
           {algorithm.auto_run && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2 border-t">
-              <Badge variant="outline" className="text-xs">
-                Auto-run enabled
-              </Badge>
+            <div className="space-y-2 pt-2 border-t">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" className="text-xs">
+                  <Timer className="h-3 w-3 mr-1" />
+                  {getSchedulingTypeBadge(algorithm.scheduling_type || 'interval')}
+                </Badge>
+
+                {algorithm.scheduling_type !== 'continuous' && (
+                  <Badge variant="outline" className="text-xs">
+                    <Clock className="h-3 w-3 mr-1" />
+                    {formatInterval(algorithm.execution_interval)}
+                  </Badge>
+                )}
+
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${
+                    algorithm.run_duration_type !== 'forever' ? 'border-orange-500 text-orange-600' : ''
+                  }`}
+                >
+                  <Calendar className="h-3 w-3 mr-1" />
+                  {getDurationText(algorithm)}
+                </Badge>
+
+                {algorithm.auto_stop_on_loss && algorithm.auto_stop_loss_threshold && (
+                  <Badge variant="outline" className="text-xs border-red-500 text-red-600">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    Stop at ${algorithm.auto_stop_loss_threshold}
+                  </Badge>
+                )}
+              </div>
+
+              {algorithm.execution_time_windows && algorithm.execution_time_windows.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-medium">Time windows:</span>{' '}
+                  {algorithm.execution_time_windows
+                    .map((w: any) => `${w.start}-${w.end}`)
+                    .join(', ')}
+                </div>
+              )}
+
+              {algorithm.execution_times && algorithm.execution_times.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-medium">Execution times:</span>{' '}
+                  {algorithm.execution_times.join(', ')}
+                </div>
+              )}
+
               {algorithm.last_run_at && (
-                <span>
+                <div className="text-xs text-muted-foreground">
                   Last run: {new Date(algorithm.last_run_at).toLocaleString()}
-                </span>
+                </div>
+              )}
+
+              {algorithm.next_scheduled_run && (
+                <div className="text-xs text-muted-foreground">
+                  Next run: {new Date(algorithm.next_scheduled_run).toLocaleString()}
+                </div>
               )}
             </div>
           )}

@@ -29,37 +29,63 @@ interface PriceDataPoint {
   ema_20?: number;
 }
 
+interface PortfolioSimulation {
+  initial_capital: number;
+  start_date: string;
+  end_date: string;
+  final_value: number;
+  total_pnl_dollar: number;
+  total_pnl_percent: number;
+  current_position: {
+    shares: number;
+    symbol: string;
+    value: number;
+  };
+  trades_executed: number;
+  cash_remaining: number;
+}
+
 export function useSignalSimulation() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [stats, setStats] = useState<SignalStats | null>(null);
+  const [portfolioSimulation, setPortfolioSimulation] = useState<PortfolioSimulation | null>(null);
   const [loading, setLoading] = useState(false);
 
   const runSimulation = useCallback(
     async (
       priceData: PriceDataPoint[],
       entryConditions: Condition[],
-      exitConditions: Condition[]
+      exitConditions: Condition[],
+      initialCapital?: number,
+      startDate?: string
     ) => {
       if (priceData.length === 0) {
         setSignals([]);
         setStats(null);
+        setPortfolioSimulation(null);
         return;
       }
 
       setLoading(true);
 
       try {
+        const requestBody = {
+          price_data: priceData,
+          entry_conditions: entryConditions,
+          exit_conditions: exitConditions,
+          initial_capital: initialCapital,
+          start_date: startDate,
+        };
+
+        console.log('API Request - initial_capital:', initialCapital, 'start_date:', startDate);
+
         const response = await fetch('/api/v1/algorithms/visual/preview-signals', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${localStorage.getItem('access_token')}`,
           },
-          body: JSON.stringify({
-            price_data: priceData,
-            entry_conditions: entryConditions,
-            exit_conditions: exitConditions,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const data = await response.json();
@@ -91,14 +117,23 @@ export function useSignalSimulation() {
             estimatedWinRate,
             estimatedReturn,
           });
+
+          // Set portfolio simulation if available
+          if (data.data.portfolio_simulation) {
+            setPortfolioSimulation(data.data.portfolio_simulation);
+          } else {
+            setPortfolioSimulation(null);
+          }
         } else {
           setSignals([]);
           setStats(null);
+          setPortfolioSimulation(null);
         }
       } catch (err) {
         console.error('Failed to simulate signals:', err);
         setSignals([]);
         setStats(null);
+        setPortfolioSimulation(null);
       } finally {
         setLoading(false);
       }
@@ -109,6 +144,7 @@ export function useSignalSimulation() {
   return {
     signals,
     stats,
+    portfolioSimulation,
     loading,
     runSimulation,
   };

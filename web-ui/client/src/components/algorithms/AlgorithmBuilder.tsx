@@ -9,9 +9,14 @@ import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Separator } from '@/components/ui/separator';
 import { Code, Play, Save, AlertCircle, CheckCircle2, Loader2, Blocks, LineChart } from 'lucide-react';
 import { NoCodeAlgorithmBuilder } from './NoCodeAlgorithmBuilder';
 import { InteractiveChartBuilder } from './InteractiveChartBuilder';
+import { TimeWindowBuilder } from './TimeWindowBuilder';
+import { ExecutionTimePicker } from './ExecutionTimePicker';
+import { SchedulePreview } from './SchedulePreview';
 
 interface AlgorithmBuilderProps {
   algorithm?: any;
@@ -63,6 +68,26 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
   const [riskPerTrade, setRiskPerTrade] = useState(algorithm?.risk_per_trade || 2);
   const [parameters, setParameters] = useState(algorithm?.parameters || {});
 
+  // Advanced scheduling state
+  const [schedulingType, setSchedulingType] = useState(algorithm?.scheduling_type || 'interval');
+  const [executionTimeWindows, setExecutionTimeWindows] = useState<Array<{ start: string; end: string }>>(
+    algorithm?.execution_time_windows || []
+  );
+  const [executionTimes, setExecutionTimes] = useState<string[]>(algorithm?.execution_times || []);
+  const [runContinuously, setRunContinuously] = useState(algorithm?.run_continuously || false);
+
+  // Duration controls
+  const [runDurationType, setRunDurationType] = useState(algorithm?.run_duration_type || 'forever');
+  const [runDurationValue, setRunDurationValue] = useState(algorithm?.run_duration_value || 30);
+  const [runStartDate, setRunStartDate] = useState(algorithm?.run_start_date || '');
+  const [runEndDate, setRunEndDate] = useState(algorithm?.run_end_date || '');
+
+  // Auto-stop controls
+  const [autoStopOnLoss, setAutoStopOnLoss] = useState(algorithm?.auto_stop_on_loss || false);
+  const [autoStopLossThreshold, setAutoStopLossThreshold] = useState(
+    algorithm?.auto_stop_loss_threshold || 500
+  );
+
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -100,6 +125,19 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
         max_positions: maxPositions,
         risk_per_trade: riskPerTrade,
         parameters,
+        // Advanced scheduling
+        scheduling_type: schedulingType,
+        execution_time_windows: executionTimeWindows,
+        execution_times: executionTimes,
+        run_continuously: runContinuously,
+        // Duration controls
+        run_duration_type: runDurationType,
+        run_duration_value: runDurationValue,
+        run_start_date: runStartDate || null,
+        run_end_date: runEndDate || null,
+        // Auto-stop
+        auto_stop_on_loss: autoStopOnLoss,
+        auto_stop_loss_threshold: autoStopLossThreshold,
       });
     } finally {
       setSaving(false);
@@ -226,65 +264,235 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
               )}
             </TabsContent>
 
-            <TabsContent value="config" className="space-y-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Auto Run</Label>
+            <TabsContent value="config" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-6">
+                  {/* Auto-Run Toggle */}
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Auto Run</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Enable automatic execution on schedule
+                      </p>
+                    </div>
+                    <Switch checked={autoRun} onCheckedChange={setAutoRun} />
+                  </div>
+
+                  {autoRun && (
+                    <>
+                      <Separator />
+
+                      {/* Scheduling Type */}
+                      <div className="space-y-3">
+                        <Label>Scheduling Mode</Label>
+                        <RadioGroup value={schedulingType} onValueChange={setSchedulingType}>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="interval" id="scheduling-interval" />
+                            <Label htmlFor="scheduling-interval" className="font-normal cursor-pointer">
+                              Interval - Run every X minutes/hours
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="time_windows" id="scheduling-windows" />
+                            <Label htmlFor="scheduling-windows" className="font-normal cursor-pointer">
+                              Time Windows - Run within specific hours
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="single_time" id="scheduling-single" />
+                            <Label htmlFor="scheduling-single" className="font-normal cursor-pointer">
+                              Single Time - Run once per day at specific times
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="continuous" id="scheduling-continuous" />
+                            <Label htmlFor="scheduling-continuous" className="font-normal cursor-pointer">
+                              Continuous - Run as frequently as possible
+                            </Label>
+                          </div>
+                        </RadioGroup>
+                      </div>
+
+                      {/* Interval Settings */}
+                      {(schedulingType === 'interval' || schedulingType === 'time_windows') && (
+                        <div className="space-y-2">
+                          <Label htmlFor="interval">Execution Interval</Label>
+                          <Select value={executionInterval} onValueChange={setExecutionInterval}>
+                            <SelectTrigger id="interval">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="1min">Every 1 Minute</SelectItem>
+                              <SelectItem value="5min">Every 5 Minutes</SelectItem>
+                              <SelectItem value="15min">Every 15 Minutes</SelectItem>
+                              <SelectItem value="hourly">Hourly</SelectItem>
+                              <SelectItem value="daily">Daily</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* Time Windows */}
+                      {(schedulingType === 'time_windows' ||
+                        (schedulingType === 'interval' || schedulingType === 'continuous')) && (
+                        <>
+                          <Separator />
+                          <div className="space-y-2">
+                            <Label>Time Windows {schedulingType === 'interval' && '(Optional)'}</Label>
+                            <p className="text-xs text-muted-foreground">
+                              {schedulingType === 'interval'
+                                ? 'Optionally restrict execution to specific time windows'
+                                : 'Define when the algorithm should run'}
+                            </p>
+                            <TimeWindowBuilder
+                              windows={executionTimeWindows}
+                              onChange={setExecutionTimeWindows}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* Execution Times */}
+                      {schedulingType === 'single_time' && (
+                        <>
+                          <Separator />
+                          <div className="space-y-2">
+                            <Label>Execution Times</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Specify exact times to run once per day
+                            </p>
+                            <ExecutionTimePicker
+                              times={executionTimes}
+                              onChange={setExecutionTimes}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      <Separator />
+
+                      {/* Duration Controls */}
+                      <div className="space-y-3">
+                        <Label>Run Duration</Label>
+                        <Select value={runDurationType} onValueChange={setRunDurationType}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="forever">Run Indefinitely</SelectItem>
+                            <SelectItem value="days">Run for X Days</SelectItem>
+                            <SelectItem value="months">Run for X Months</SelectItem>
+                            <SelectItem value="years">Run for X Years</SelectItem>
+                            <SelectItem value="until_date">Run Until Specific Date</SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        {runDurationType !== 'forever' && runDurationType !== 'until_date' && (
+                          <Input
+                            type="number"
+                            min={1}
+                            value={runDurationValue}
+                            onChange={(e) => setRunDurationValue(parseInt(e.target.value))}
+                            placeholder={`Number of ${runDurationType}`}
+                          />
+                        )}
+
+                        {runDurationType === 'until_date' && (
+                          <Input
+                            type="date"
+                            value={runEndDate}
+                            onChange={(e) => setRunEndDate(e.target.value)}
+                          />
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      {/* Auto-Stop on Loss */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label>Auto-Stop on Loss</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Automatically stop if losses exceed threshold
+                            </p>
+                          </div>
+                          <Switch checked={autoStopOnLoss} onCheckedChange={setAutoStopOnLoss} />
+                        </div>
+
+                        {autoStopOnLoss && (
+                          <div className="space-y-2">
+                            <Label htmlFor="loss-threshold">Loss Threshold ($)</Label>
+                            <Input
+                              id="loss-threshold"
+                              type="number"
+                              min={0}
+                              step={10}
+                              value={autoStopLossThreshold}
+                              onChange={(e) => setAutoStopLossThreshold(parseFloat(e.target.value))}
+                              placeholder="500"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Algorithm will stop if cumulative loss exceeds this amount
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  <Separator />
+
+                  {/* Position & Risk Controls */}
+                  <div className="space-y-2">
+                    <Label htmlFor="max-positions">Max Positions</Label>
+                    <Input
+                      id="max-positions"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={maxPositions}
+                      onChange={(e) => setMaxPositions(parseInt(e.target.value))}
+                    />
                     <p className="text-sm text-muted-foreground">
-                      Enable automatic execution on schedule
+                      Maximum number of concurrent positions
                     </p>
                   </div>
-                  <Switch checked={autoRun} onCheckedChange={setAutoRun} />
-                </div>
 
-                {autoRun && (
                   <div className="space-y-2">
-                    <Label htmlFor="interval">Execution Interval</Label>
-                    <Select value={executionInterval} onValueChange={setExecutionInterval}>
-                      <SelectTrigger id="interval">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1min">Every 1 Minute</SelectItem>
-                        <SelectItem value="5min">Every 5 Minutes</SelectItem>
-                        <SelectItem value="15min">Every 15 Minutes</SelectItem>
-                        <SelectItem value="hourly">Hourly</SelectItem>
-                        <SelectItem value="daily">Daily</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label htmlFor="risk-per-trade">Risk Per Trade (%)</Label>
+                    <Input
+                      id="risk-per-trade"
+                      type="number"
+                      min={0.1}
+                      max={10}
+                      step={0.1}
+                      value={riskPerTrade}
+                      onChange={(e) => setRiskPerTrade(parseFloat(e.target.value))}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Maximum portfolio risk per individual trade
+                    </p>
                   </div>
-                )}
-
-                <div className="space-y-2">
-                  <Label htmlFor="max-positions">Max Positions</Label>
-                  <Input
-                    id="max-positions"
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={maxPositions}
-                    onChange={(e) => setMaxPositions(parseInt(e.target.value))}
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Maximum number of concurrent positions
-                  </p>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="risk-per-trade">Risk Per Trade (%)</Label>
-                  <Input
-                    id="risk-per-trade"
-                    type="number"
-                    min={0.1}
-                    max={10}
-                    step={0.1}
-                    value={riskPerTrade}
-                    onChange={(e) => setRiskPerTrade(parseFloat(e.target.value))}
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Maximum portfolio risk per individual trade
-                  </p>
+                {/* Schedule Preview */}
+                <div>
+                  {autoRun && (
+                    <SchedulePreview
+                      schedulingType={schedulingType}
+                      executionInterval={executionInterval}
+                      executionTimeWindows={executionTimeWindows}
+                      executionTimes={executionTimes}
+                      runContinuously={runContinuously}
+                      runDurationType={runDurationType}
+                      runDurationValue={runDurationValue}
+                      runStartDate={runStartDate}
+                      runEndDate={runEndDate}
+                      autoStopOnLoss={autoStopOnLoss}
+                      autoStopLossThreshold={autoStopLossThreshold}
+                    />
+                  )}
                 </div>
               </div>
             </TabsContent>

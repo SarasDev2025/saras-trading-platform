@@ -944,6 +944,8 @@ class PreviewSignalsRequest(BaseModel):
     price_data: List[Dict[str, Any]]
     entry_conditions: List[Dict[str, Any]]
     exit_conditions: List[Dict[str, Any]]
+    initial_capital: Optional[float] = Field(default=10000, description="Initial capital for portfolio simulation")
+    start_date: Optional[str] = Field(default=None, description="Start date for portfolio simulation (YYYY-MM-DD)")
 
 @router.get("/visual/preview-data", response_model=APIResponse)
 async def get_preview_data(
@@ -1156,12 +1158,78 @@ async def preview_signals(
                 estimated_win_rate = (len(winning_trades) / len(trades)) * 100
                 estimated_return = sum(trades)
 
+        # Portfolio simulation (if initial_capital provided)
+        portfolio_simulation = None
+        if request.initial_capital and len(signals) > 0:
+            import pandas as pd
+            from datetime import datetime as dt
+
+            # Determine start date for simulation
+            sim_start_date = request.start_date if request.start_date else df['date'].iloc[0].strftime('%Y-%m-%d')
+            sim_end_date = df['date'].iloc[-1].strftime('%Y-%m-%d')
+
+            # Filter signals from start date onwards
+            filtered_signals = [s for s in signals if s['date'] >= sim_start_date]
+
+            cash = float(request.initial_capital)
+            shares = 0
+            trades_executed = 0
+            current_symbol = df.iloc[0].get('symbol', 'Unknown') if 'symbol' in df.columns else 'Unknown'
+
+            # Simulate trading
+            for signal in filtered_signals:
+                if signal['type'] == 'buy' and shares == 0:
+                    # Buy: invest all cash
+                    shares = cash / signal['price']
+                    cash = 0
+                    trades_executed += 1
+
+                elif signal['type'] == 'sell' and shares > 0:
+                    # Sell: liquidate all shares
+                    cash = shares * signal['price']
+                    shares = 0
+                    trades_executed += 1
+
+            # Calculate final value (liquidate any remaining shares at last price)
+            last_price = float(df['close'].iloc[-1])
+            if shares > 0:
+                final_value = shares * last_price
+                current_position_shares = shares
+                current_position_value = final_value
+                cash_remaining = 0
+            else:
+                final_value = cash
+                current_position_shares = 0
+                current_position_value = 0
+                cash_remaining = cash
+
+            # Calculate P&L
+            total_pnl_dollar = final_value - float(request.initial_capital)
+            total_pnl_percent = (total_pnl_dollar / float(request.initial_capital)) * 100
+
+            portfolio_simulation = {
+                "initial_capital": float(request.initial_capital),
+                "start_date": sim_start_date,
+                "end_date": sim_end_date,
+                "final_value": round(final_value, 2),
+                "total_pnl_dollar": round(total_pnl_dollar, 2),
+                "total_pnl_percent": round(total_pnl_percent, 2),
+                "current_position": {
+                    "shares": round(current_position_shares, 4),
+                    "symbol": current_symbol,
+                    "value": round(current_position_value, 2)
+                },
+                "trades_executed": trades_executed,
+                "cash_remaining": round(cash_remaining, 2)
+            }
+
         return APIResponse(
             success=True,
             data={
                 "signals": signals,
                 "estimated_win_rate": estimated_win_rate,
-                "estimated_return": estimated_return
+                "estimated_return": estimated_return,
+                "portfolio_simulation": portfolio_simulation
             }
         )
 

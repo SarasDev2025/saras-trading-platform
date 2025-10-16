@@ -7,6 +7,23 @@ import { Separator } from '@/components/ui/separator';
 import { Plus, TrendingUp, TrendingDown, Target, Percent, Loader2, Lightbulb } from 'lucide-react';
 import { RuleBlock } from '../RuleBlock';
 import { Condition } from './index';
+import { PortfolioSimulator } from './PortfolioSimulator';
+
+interface PortfolioSimulation {
+  initial_capital: number;
+  start_date: string;
+  end_date: string;
+  final_value: number;
+  total_pnl_dollar: number;
+  total_pnl_percent: number;
+  current_position: {
+    shares: number;
+    symbol: string;
+    value: number;
+  };
+  trades_executed: number;
+  cash_remaining: number;
+}
 
 interface ControlPanelProps {
   name: string;
@@ -19,7 +36,10 @@ interface ControlPanelProps {
     estimatedWinRate?: number;
     estimatedReturn?: number;
   } | null;
+  portfolioSimulation: PortfolioSimulation | null;
   simulatingSignals: boolean;
+  initialCapital: number;
+  startDate: string;
   onNameChange: (name: string) => void;
   onAddEntryCondition: () => void;
   onAddExitCondition: () => void;
@@ -28,6 +48,8 @@ interface ControlPanelProps {
   onUpdateEntryCondition: (id: string, updates: Partial<Condition>) => void;
   onUpdateExitCondition: (id: string, updates: Partial<Condition>) => void;
   onOpenSuggestions: () => void;
+  onInitialCapitalChange: (value: number) => void;
+  onStartDateChange: (value: string) => void;
 }
 
 const AVAILABLE_BLOCKS = {
@@ -59,7 +81,10 @@ export function ControlPanel({
   entryConditions,
   exitConditions,
   stats,
+  portfolioSimulation,
   simulatingSignals,
+  initialCapital,
+  startDate,
   onNameChange,
   onAddEntryCondition,
   onAddExitCondition,
@@ -68,6 +93,8 @@ export function ControlPanel({
   onUpdateEntryCondition,
   onUpdateExitCondition,
   onOpenSuggestions,
+  onInitialCapitalChange,
+  onStartDateChange,
 }: ControlPanelProps) {
   return (
     <div className="space-y-4">
@@ -238,6 +265,15 @@ export function ControlPanel({
           )}
         </CardContent>
       </Card>
+
+      {/* Portfolio Simulator */}
+      <PortfolioSimulator
+        initialCapital={initialCapital}
+        startDate={startDate}
+        simulation={portfolioSimulation}
+        onInitialCapitalChange={onInitialCapitalChange}
+        onStartDateChange={onStartDateChange}
+      />
     </div>
   );
 }

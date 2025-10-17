@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -104,10 +104,20 @@ export function StrategySuggestions({
     fetchSuggestions(newStyle);
   };
 
-  // Auto-fetch on open
-  if (open && !loading && suggestions.length === 0 && !error) {
-    fetchSuggestions(style);
-  }
+  // Auto-fetch on open - use useEffect to avoid infinite loops
+  useEffect(() => {
+    if (open) {
+      // Fetch suggestions when dialog opens
+      if (suggestions.length === 0 && !loading && !error) {
+        fetchSuggestions(style);
+      }
+    } else {
+      // Reset state when dialog closes
+      setSuggestions([]);
+      setError(null);
+      setAnalysisInfo(null);
+    }
+  }, [open]); // Only run when dialog open/close state changes
 
   const getConfidenceBadgeVariant = (confidence: string) => {
     switch (confidence) {

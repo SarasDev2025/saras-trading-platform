@@ -57,8 +57,18 @@ for symbol, data in market_data.items():
 `;
 
 export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuilderProps) {
+  // Determine builder mode from algorithm data
+  // If builder_type is 'visual', check visual_config._ui_mode to differentiate
+  const getInitialBuilderMode = (): 'code' | 'visual' | 'interactive' => {
+    if (!algorithm) return 'code';
+    if (algorithm.builder_type === 'visual' && algorithm.visual_config?._ui_mode === 'interactive') {
+      return 'interactive';
+    }
+    return algorithm.builder_type || 'code';
+  };
+
   const [builderMode, setBuilderMode] = useState<'code' | 'visual' | 'interactive'>(
-    algorithm?.builder_type || 'code'
+    getInitialBuilderMode()
   );
   const [name, setName] = useState(algorithm?.name || '');
   const [strategyCode, setStrategyCode] = useState(algorithm?.strategy_code || DEFAULT_TEMPLATE);

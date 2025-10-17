@@ -66,7 +66,9 @@ class CreateAlgorithmRequest(BaseModel):
 class UpdateAlgorithmRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    builder_type: Optional[str] = None  # Added to support visual recompilation
     strategy_code: Optional[str] = None
+    visual_config: Optional[Dict[str, Any]] = None  # Added to support visual recompilation
     parameters: Optional[Dict[str, Any]] = None
     auto_run: Optional[bool] = None
     execution_interval: Optional[str] = None
@@ -508,6 +510,9 @@ async def get_algorithm(
                 builder_type, visual_config, stock_universe,
                 status, last_run_at, last_error,
                 total_executions, successful_executions,
+                scheduling_type, execution_time_windows, execution_times, run_continuously,
+                run_duration_type, run_duration_value, run_start_date, run_end_date,
+                auto_stop_on_loss, auto_stop_loss_threshold,
                 created_at, updated_at
             FROM trading_algorithms
             WHERE id = :algorithm_id AND user_id = :user_id
@@ -541,6 +546,16 @@ async def get_algorithm(
                 "last_error": algo.last_error,
                 "total_executions": algo.total_executions,
                 "successful_executions": algo.successful_executions,
+                "scheduling_type": algo.scheduling_type,
+                "execution_time_windows": algo.execution_time_windows,
+                "execution_times": algo.execution_times,
+                "run_continuously": algo.run_continuously,
+                "run_duration_type": algo.run_duration_type,
+                "run_duration_value": algo.run_duration_value,
+                "run_start_date": algo.run_start_date.isoformat() if algo.run_start_date else None,
+                "run_end_date": algo.run_end_date.isoformat() if algo.run_end_date else None,
+                "auto_stop_on_loss": algo.auto_stop_on_loss,
+                "auto_stop_loss_threshold": float(algo.auto_stop_loss_threshold) if algo.auto_stop_loss_threshold else None,
                 "created_at": algo.created_at.isoformat(),
                 "updated_at": algo.updated_at.isoformat()
             }
@@ -576,8 +591,26 @@ async def update_algorithm(
             updates.append("description = :description")
             params["description"] = request.description
 
-        if request.strategy_code is not None:
-            # Validate code
+        # Handle visual config updates (recompile to code)
+        if request.visual_config is not None:
+            # Validate visual configuration
+            validation = VisualAlgorithmCompiler.validate_visual_config(request.visual_config)
+            if not validation['valid']:
+                raise HTTPException(status_code=400, detail=validation['error'])
+
+            # Compile visual config to Python code
+            strategy_code = VisualAlgorithmCompiler.compile_visual_to_code(request.visual_config)
+
+            # Update both visual_config AND strategy_code
+            updates.append("visual_config = :visual_config")
+            updates.append("strategy_code = :strategy_code")
+            params["visual_config"] = json.dumps(request.visual_config)
+            params["strategy_code"] = strategy_code
+
+            logger.info(f"Recompiled visual config to code for algorithm {algorithm_id}")
+
+        elif request.strategy_code is not None:
+            # Manual code mode: validate Python code
             validation = await AlgorithmEngine.validate_algorithm_code(request.strategy_code)
             if not validation['valid']:
                 raise HTTPException(status_code=400, detail=validation['error'])

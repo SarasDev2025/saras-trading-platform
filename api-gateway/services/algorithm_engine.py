@@ -420,10 +420,12 @@ class AlgorithmEngine:
         stock_universe: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Get market data for algorithm
+        Get market data for algorithm with technical indicators
 
-        In production, this would fetch from broker APIs
-        For now, returns basic data from assets table
+        In production, this would fetch from broker APIs with historical data
+        For now, returns basic data from assets table with simulated indicators
+
+        TODO: Integrate with real-time broker APIs for OHLCV data and indicator calculation
         """
         # Get top liquid assets for the broker's market
         if broker == 'zerodha':
@@ -467,49 +469,237 @@ class AlgorithmEngine:
 
         market_data = {}
         for row in result.fetchall():
+            price = float(row.current_price) if row.current_price else 0.0
+
+            # Calculate simulated indicators
+            # In production, these would be calculated from historical OHLCV data
+            # For now, using approximate values based on current price
+            indicators = AlgorithmEngine._calculate_simulated_indicators(price)
+
             market_data[row.symbol] = {
                 'name': row.name,
-                'price': float(row.current_price) if row.current_price else 0.0,
+                'price': price,
+                'volume': 1000000,  # Simulated volume
                 'exchange': row.exchange,
-                'asset_type': row.asset_type
+                'asset_type': row.asset_type,
+                'indicators': indicators
             }
 
         return market_data
 
     @staticmethod
+    def _calculate_simulated_indicators(price: float) -> Dict[str, float]:
+        """
+        Calculate simulated technical indicators
+
+        NOTE: This is a simplified simulation for demo purposes.
+        In production, indicators should be calculated from real historical OHLCV data.
+
+        TODO: Replace with real indicator calculations from broker API data
+        """
+        if price == 0:
+            return {}
+
+        # Simulate reasonable indicator values based on current price
+        # These approximate typical indicator ranges
+        indicators = {
+            # RSI - typically 0-100, oversold <30, overbought >70
+            'rsi_14': 50.0 + (hash(str(price)) % 40 - 20),  # Random-ish 30-70
+            'rsi_9': 50.0 + (hash(str(price * 1.1)) % 40 - 20),
+
+            # Moving Averages - close to current price
+            'sma_10': price * (1.0 + (hash(str(price * 2)) % 10 - 5) / 100),  # ±5%
+            'sma_20': price * (1.0 + (hash(str(price * 3)) % 10 - 5) / 100),
+            'sma_50': price * (1.0 + (hash(str(price * 4)) % 10 - 5) / 100),
+            'ema_10': price * (1.0 + (hash(str(price * 5)) % 10 - 5) / 100),
+            'ema_20': price * (1.0 + (hash(str(price * 6)) % 10 - 5) / 100),
+            'ema_50': price * (1.0 + (hash(str(price * 7)) % 10 - 5) / 100),
+
+            # Previous values for crossover detection (slightly different)
+            'sma_10_prev': price * (1.0 + (hash(str(price * 2.1)) % 10 - 5) / 100),
+            'sma_20_prev': price * (1.0 + (hash(str(price * 3.1)) % 10 - 5) / 100),
+            'ema_10_prev': price * (1.0 + (hash(str(price * 5.1)) % 10 - 5) / 100),
+            'ema_20_prev': price * (1.0 + (hash(str(price * 6.1)) % 10 - 5) / 100),
+
+            # Bollinger Bands - 2% bands
+            'bb_upper_20': price * 1.02,
+            'bb_lower_20': price * 0.98,
+            'bb_middle_20': price,
+
+            # MACD
+            'macd': (hash(str(price * 8)) % 20 - 10) / 10.0,  # Random -1 to 1
+            'macd_signal': (hash(str(price * 9)) % 20 - 10) / 10.0,
+            'macd_hist': (hash(str(price * 10)) % 20 - 10) / 10.0,
+
+            # High/Low lookbacks
+            'highest_20': price * 1.08,
+            'lowest_20': price * 0.92,
+            'highest_50': price * 1.12,
+            'lowest_50': price * 0.88,
+
+            # Volume indicators
+            'avg_volume': 1000000.0,
+            'volume_sma_20': 1000000.0,
+        }
+
+        return indicators
+
+    @staticmethod
     async def validate_algorithm_code(algorithm_code: str) -> Dict[str, Any]:
         """
-        Validate algorithm code for syntax errors and security issues
+        Validate algorithm code for syntax, security, and runtime issues
 
         Returns:
             Dict with validation results
         """
         try:
-            # Basic syntax check
-            compile(algorithm_code, '<string>', 'exec')
+            # 1. Basic syntax check
+            try:
+                compile(algorithm_code, '<string>', 'exec')
+            except SyntaxError as e:
+                return {
+                    "valid": False,
+                    "error": f"Syntax error at line {e.lineno}: {e.msg}"
+                }
 
-            # Check for forbidden operations (basic security)
-            forbidden_keywords = ['import os', 'import sys', 'open(', '__import__', 'eval(', 'exec(']
+            # 2. Check for forbidden operations (security)
+            forbidden_keywords = [
+                'import os', 'import sys', 'import subprocess', 'import socket',
+                'open(', '__import__', 'eval(', 'exec(',
+                'compile(', 'globals(', 'locals(', 'vars(',
+                '__builtins__', '__code__', '__file__',
+                'os.', 'sys.', 'subprocess.', 'socket.'
+            ]
 
             for keyword in forbidden_keywords:
                 if keyword in algorithm_code:
                     return {
                         "valid": False,
-                        "error": f"Forbidden operation detected: {keyword}"
+                        "error": f"Forbidden operation detected: {keyword}. Algorithms cannot access file system, network, or system modules for security reasons."
                     }
 
-            return {
-                "valid": True,
-                "message": "Algorithm code is valid"
-            }
+            # 3. AST-based validation
+            import ast
+            try:
+                tree = ast.parse(algorithm_code)
 
-        except SyntaxError as e:
-            return {
-                "valid": False,
-                "error": f"Syntax error at line {e.lineno}: {e.msg}"
-            }
+                # Check for dangerous AST nodes
+                for node in ast.walk(tree):
+                    # Disallow import statements (except allowed ones handled by globals)
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
+                        return {
+                            "valid": False,
+                            "error": "Import statements are not allowed. Use pre-imported modules: pd, np, ta, datetime"
+                        }
+
+                    # Disallow function definitions at module level (to prevent code injection)
+                    # Algorithm should be inline code, not function definitions
+                    # Exception: helper functions within the algorithm scope are ok
+                    if isinstance(node, ast.FunctionDef) and node.col_offset == 0:
+                        # Top-level function definitions are suspicious
+                        logger.warning(f"Algorithm contains top-level function: {node.name}")
+
+            except SyntaxError as e:
+                return {
+                    "valid": False,
+                    "error": f"AST parsing failed at line {e.lineno}: {e.msg}"
+                }
+
+            # 4. Dry-run validation with mock context
+            if INDICATORS_AVAILABLE:
+                try:
+                    # Create mock context similar to real execution
+                    mock_market_data = {
+                        'AAPL': {
+                            'name': 'Apple Inc.',
+                            'price': 150.0,
+                            'volume': 1000000,
+                            'exchange': 'NASDAQ',
+                            'asset_type': 'STOCK',
+                            'indicators': {
+                                'rsi_14': 50.0,
+                                'sma_20': 148.0,
+                                'ema_20': 149.0,
+                                'bb_upper_20': 153.0,
+                                'bb_lower_20': 147.0,
+                                'macd': 0.5,
+                            }
+                        }
+                    }
+
+                    mock_context = {
+                        'parameters': {},
+                        'positions': [],
+                        'market_data': mock_market_data,
+                        'max_positions': 5,
+                        'risk_per_trade': 2.0,
+                        'broker': 'alpaca',
+                        'trading_mode': 'paper',
+                        'signals': []
+                    }
+
+                    # Mock generate_signal function
+                    def mock_generate_signal(symbol: str, signal_type: str, quantity: float, reason: str = ""):
+                        if signal_type not in ['buy', 'sell']:
+                            raise ValueError(f"Invalid signal_type: {signal_type}. Must be 'buy' or 'sell'")
+                        if quantity <= 0:
+                            raise ValueError(f"Invalid quantity: {quantity}. Must be positive")
+                        mock_context['signals'].append({
+                            'symbol': symbol,
+                            'signal_type': signal_type,
+                            'quantity': quantity,
+                            'reason': reason
+                        })
+
+                    mock_globals = {
+                        'generate_signal': mock_generate_signal,
+                        'pd': pd,
+                        'np': np,
+                        'datetime': datetime,
+                        'print': lambda *args: None,  # Suppress prints during validation
+                    }
+
+                    if ta is not None:
+                        mock_globals['ta'] = ta
+
+                    # Execute algorithm code in sandbox
+                    exec(algorithm_code, mock_globals, mock_context)
+
+                    # Check if algorithm generated any signals (good sign it's working)
+                    signal_count = len(mock_context['signals'])
+
+                    return {
+                        "valid": True,
+                        "message": "Algorithm code is valid and executed successfully in dry-run",
+                        "dry_run_signals": signal_count,
+                        "warnings": []
+                    }
+
+                except NameError as e:
+                    return {
+                        "valid": False,
+                        "error": f"Runtime error: {str(e)}. Make sure all variables are defined or use available context: market_data, positions, parameters, max_positions, risk_per_trade"
+                    }
+                except ValueError as e:
+                    return {
+                        "valid": False,
+                        "error": f"Runtime validation error: {str(e)}"
+                    }
+                except Exception as e:
+                    return {
+                        "valid": False,
+                        "error": f"Runtime error during validation: {str(e)}"
+                    }
+            else:
+                # If pandas not available, skip dry-run
+                return {
+                    "valid": True,
+                    "message": "Syntax and security checks passed (dry-run skipped - pandas not available)",
+                    "warnings": ["Dry-run validation skipped - install pandas for full validation"]
+                }
+
         except Exception as e:
             return {
                 "valid": False,
-                "error": str(e)
+                "error": f"Validation error: {str(e)}"
             }

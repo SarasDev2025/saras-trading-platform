@@ -174,6 +174,7 @@ export function NoCodeAlgorithmBuilder({ algorithm, onSave, onCancel }: NoCodeAl
         entry_conditions: entryConditions,
         exit_conditions: exitConditions,
         position_sizing: positionSizing,
+        _ui_mode: 'visual', // Flag to distinguish from interactive mode
       };
 
       // Parse selected symbols

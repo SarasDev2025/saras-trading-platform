@@ -118,6 +118,7 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
         entry_conditions: entryConditions,
         exit_conditions: exitConditions,
         position_sizing: { type: 'fixed', quantity: 10 },
+        _ui_mode: 'interactive', // Flag to distinguish from visual mode
       };
 
       await onSave({

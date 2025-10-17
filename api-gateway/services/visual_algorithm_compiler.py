@@ -168,15 +168,38 @@ class VisualAlgorithmCompiler:
                 operator = condition.get('operator')
                 value = condition.get('value')
                 period = condition.get('period', 14)
+                comparison = VisualAlgorithmCompiler._get_operator_symbol(operator)
 
-                # Generate indicator calculation (simplified)
+                # Generate indicator reference from data
                 if indicator == 'RSI':
-                    indicator_var = f"(50)"  # Placeholder - would use actual RSI calculation
-                    comparison = VisualAlgorithmCompiler._get_operator_symbol(operator)
+                    # RSI should be pre-calculated in market data indicators
+                    indicator_var = f"data.get('indicators', {{}}).get('rsi_{period}', 50)"
                     condition_parts.append(f"{indicator_var} {comparison} {value}")
 
-                elif indicator in ['SMA', 'EMA']:
-                    condition_parts.append(f"current_price {VisualAlgorithmCompiler._get_operator_symbol(operator)} (100)")  # Placeholder
+                elif indicator == 'SMA':
+                    # Simple Moving Average
+                    indicator_var = f"data.get('indicators', {{}}).get('sma_{period}', current_price)"
+                    condition_parts.append(f"{indicator_var} {comparison} {value}")
+
+                elif indicator == 'EMA':
+                    # Exponential Moving Average
+                    indicator_var = f"data.get('indicators', {{}}).get('ema_{period}', current_price)"
+                    condition_parts.append(f"{indicator_var} {comparison} {value}")
+
+                elif indicator == 'MACD':
+                    # MACD value
+                    indicator_var = f"data.get('indicators', {{}}).get('macd', 0)"
+                    condition_parts.append(f"{indicator_var} {comparison} {value}")
+
+                elif indicator == 'BB_UPPER':
+                    # Bollinger Band Upper
+                    indicator_var = f"data.get('indicators', {{}}).get('bb_upper_{period}', current_price * 1.02)"
+                    condition_parts.append(f"current_price {comparison} {indicator_var}")
+
+                elif indicator == 'BB_LOWER':
+                    # Bollinger Band Lower
+                    indicator_var = f"data.get('indicators', {{}}).get('bb_lower_{period}', current_price * 0.98)"
+                    condition_parts.append(f"current_price {comparison} {indicator_var}")
 
             elif condition_type == 'price_comparison':
                 # Price > SMA, Price < BB_LOWER, etc.
@@ -186,34 +209,58 @@ class VisualAlgorithmCompiler:
 
                 if reference == 'SMA':
                     period = condition.get('period', 20)
-                    condition_parts.append(f"current_price {comparison} (100)")  # Placeholder SMA
+                    ref_value = f"data.get('indicators', {{}}).get('sma_{period}', current_price)"
+                    condition_parts.append(f"current_price {comparison} {ref_value}")
+                elif reference == 'EMA':
+                    period = condition.get('period', 20)
+                    ref_value = f"data.get('indicators', {{}}).get('ema_{period}', current_price)"
+                    condition_parts.append(f"current_price {comparison} {ref_value}")
                 elif reference == 'price':
                     value = condition.get('value', 0)
                     condition_parts.append(f"current_price {comparison} {value}")
                 elif reference == 'highest_high':
                     lookback = condition.get('lookback_period', 20)
-                    condition_parts.append(f"current_price {comparison} (150)")  # Placeholder
+                    ref_value = f"data.get('indicators', {{}}).get('highest_{lookback}', current_price * 1.05)"
+                    condition_parts.append(f"current_price {comparison} {ref_value}")
                 elif reference == 'lowest_low':
                     lookback = condition.get('lookback_period', 20)
-                    condition_parts.append(f"current_price {comparison} (80)")  # Placeholder
+                    ref_value = f"data.get('indicators', {{}}).get('lowest_{lookback}', current_price * 0.95)"
+                    condition_parts.append(f"current_price {comparison} {ref_value}")
 
             elif condition_type == 'indicator_crossover':
                 # MA crossover: fast SMA crosses above slow SMA
-                indicator1 = condition.get('indicator1')
+                indicator1 = condition.get('indicator1', 'SMA')
                 period1 = condition.get('period1', 10)
-                indicator2 = condition.get('indicator2')
+                indicator2 = condition.get('indicator2', 'SMA')
                 period2 = condition.get('period2', 20)
                 direction = condition.get('direction', 'above')
 
-                comparison = ">" if direction == "above" else "<"
-                condition_parts.append(f"(100) {comparison} (120)")  # Placeholder crossover logic
+                # Get current values
+                ind1_var = f"data.get('indicators', {{}}).get('{indicator1.lower()}_{period1}', current_price)"
+                ind2_var = f"data.get('indicators', {{}}).get('{indicator2.lower()}_{period2}', current_price)"
+
+                # Get previous values for crossover detection
+                ind1_prev = f"data.get('indicators', {{}}).get('{indicator1.lower()}_{period1}_prev', current_price)"
+                ind2_prev = f"data.get('indicators', {{}}).get('{indicator2.lower()}_{period2}_prev', current_price)"
+
+                if direction == 'above':
+                    # Crossover above: was below, now above
+                    condition_parts.append(
+                        f"({ind1_prev} <= {ind2_prev} and {ind1_var} > {ind2_var})"
+                    )
+                else:
+                    # Crossover below: was above, now below
+                    condition_parts.append(
+                        f"({ind1_prev} >= {ind2_prev} and {ind1_var} < {ind2_var})"
+                    )
 
             elif condition_type == 'volume_comparison':
                 # Volume comparison
                 operator = condition.get('operator')
                 multiplier = condition.get('multiplier', 1.5)
                 comparison = VisualAlgorithmCompiler._get_operator_symbol(operator)
-                condition_parts.append(f"current_volume {comparison} (1000 * {multiplier})")  # Placeholder
+                avg_volume = f"data.get('indicators', {{}}).get('avg_volume', current_volume)"
+                condition_parts.append(f"current_volume {comparison} ({avg_volume} * {multiplier})")
 
         # Join conditions with logical operator
         if condition_parts:

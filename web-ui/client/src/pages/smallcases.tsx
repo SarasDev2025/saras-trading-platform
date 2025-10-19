@@ -205,13 +205,16 @@ export default function SmallcasesPage() {
       // Extract market status from response
       const marketStatus = response.data.data?.marketStatus;
       const isMarketOpen = marketStatus?.isOpen ?? true;
+      const marketName = marketStatus?.marketName && marketStatus.marketName.trim().length > 0
+        ? marketStatus.marketName
+        : "the market";
       const currencySymbol = pendingInvestment.smallcase.currency === 'USD' ? '$' : pendingInvestment.smallcase.currency === 'INR' ? '₹' : pendingInvestment.smallcase.currency;
 
       toast({
         title: isMarketOpen ? "Investment Successful" : "Investment Queued",
         description: isMarketOpen
           ? `You've successfully invested ${currencySymbol}${pendingInvestment.amount.toLocaleString()} in ${pendingInvestment.smallcase.name}`
-          : `Market is closed. Your ${currencySymbol}${pendingInvestment.amount.toLocaleString()} investment in ${pendingInvestment.smallcase.name} will execute when ${marketStatus.marketName} opens.`,
+          : `Market is closed. Your ${currencySymbol}${pendingInvestment.amount.toLocaleString()} investment in ${pendingInvestment.smallcase.name} will execute when ${marketName} opens.`,
       });
 
       // Refresh investments data and buying power
@@ -220,7 +223,7 @@ export default function SmallcasesPage() {
 
       // Invalidate all portfolio-related queries to update dashboard
       queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolios/cash-balance"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolios", "cash-balance"] });
 
       // Switch to investments tab to show the new investment
       setActiveTab('investments');
@@ -308,7 +311,7 @@ export default function SmallcasesPage() {
 
       // Invalidate all portfolio-related queries to update dashboard
       queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolios/cash-balance"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolios", "cash-balance"] });
 
       // Close modal
       setIsClosureModalOpen(false);

@@ -422,10 +422,8 @@ class AlgorithmEngine:
         """
         Get market data for algorithm with technical indicators
 
-        In production, this would fetch from broker APIs with historical data
-        For now, returns basic data from assets table with simulated indicators
-
-        TODO: Integrate with real-time broker APIs for OHLCV data and indicator calculation
+        Fetches REAL indicators from Redis cache (populated by DataAggregatorService)
+        Falls back to simulated indicators if cache miss
         """
         # Get top liquid assets for the broker's market
         if broker == 'zerodha':
@@ -471,21 +469,319 @@ class AlgorithmEngine:
         for row in result.fetchall():
             price = float(row.current_price) if row.current_price else 0.0
 
-            # Calculate simulated indicators
-            # In production, these would be calculated from historical OHLCV data
-            # For now, using approximate values based on current price
-            indicators = AlgorithmEngine._calculate_simulated_indicators(price)
+            # Get REAL indicators from Redis cache
+            indicators = await AlgorithmEngine._fetch_cached_indicators(row.symbol, price)
 
             market_data[row.symbol] = {
                 'name': row.name,
                 'price': price,
-                'volume': 1000000,  # Simulated volume
+                'volume': 1000000,  # Will be updated from cache metadata
                 'exchange': row.exchange,
                 'asset_type': row.asset_type,
                 'indicators': indicators
             }
 
         return market_data
+
+    @staticmethod
+    async def _get_historical_bars(
+        symbol: str,
+        timeframe: str = '1day',
+        limit: int = 500,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Three-tier data fetching strategy:
+        1. Try Redis cache (for recent data, <1 day old)
+        2. Try PostgreSQL database (for historical data, >1 day old)
+        3. Fallback to broker API (store results in database)
+
+        Args:
+            symbol: Stock symbol
+            timeframe: Timeframe ('1min', '5min', '1day', etc.)
+            limit: Number of bars to fetch
+            start_date: Optional start date for range query
+            end_date: Optional end date for range query
+
+        Returns:
+            List of OHLCV bar dicts
+        """
+        try:
+            from services.redis_cache_service import get_cache_service
+            from services.data_providers.factory import DataProviderFactory
+            import config.database as db_config
+            from config.database import get_db_session
+
+            # Tier 1: Redis Cache (for recent data)
+            if not start_date:
+                # Try cache for recent bars
+                if db_config.redis_client:
+                    cache_service = get_cache_service(db_config.redis_client)
+                    cached_bars = await cache_service.get_bars(symbol, timeframe, limit)
+
+                    if cached_bars and len(cached_bars) >= min(limit, 100):
+                        logger.debug(f"Redis HIT: {len(cached_bars)} bars for {symbol}")
+                        return cached_bars
+
+            # Tier 2: PostgreSQL Database (for historical data)
+            try:
+                async with get_db_session() as db:
+                    # Build date range query
+                    if not end_date:
+                        end_date = datetime.now(timezone.utc)
+                    if not start_date:
+                        start_date = end_date - timedelta(days=100)
+
+                    result = await db.execute(text("""
+                        SELECT
+                            timestamp,
+                            open,
+                            high,
+                            low,
+                            close,
+                            volume,
+                            vwap
+                        FROM market_data_bars
+                        WHERE symbol = :symbol
+                        AND timeframe = :timeframe
+                        AND timestamp BETWEEN :start_date AND :end_date
+                        ORDER BY timestamp DESC
+                        LIMIT :limit
+                    """), {
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'limit': limit
+                    })
+
+                    db_bars = result.fetchall()
+
+                    if db_bars and len(db_bars) > 0:
+                        logger.debug(f"Database HIT: {len(db_bars)} bars for {symbol}")
+
+                        # Convert to dict format
+                        bars = []
+                        for row in db_bars:
+                            bars.append({
+                                'timestamp': row.timestamp.isoformat(),
+                                'date': row.timestamp.isoformat(),
+                                'open': float(row.open),
+                                'high': float(row.high),
+                                'low': float(row.low),
+                                'close': float(row.close),
+                                'volume': int(row.volume),
+                                'vwap': float(row.vwap) if row.vwap else None
+                            })
+
+                        # Cache recent bars in Redis for faster subsequent access
+                        if db_config.redis_client and not start_date:
+                            cache_service = get_cache_service(db_config.redis_client)
+                            await cache_service.set_bars(symbol, timeframe, bars[:500])
+
+                        return bars
+
+            except Exception as db_error:
+                logger.debug(f"Database query failed for {symbol}: {db_error}")
+
+            # Tier 3: Broker API (last resort, store in database)
+            logger.info(f"Database MISS: Fetching {symbol} from broker API")
+
+            try:
+                provider = DataProviderFactory().get_provider('yahoo')
+
+                if not end_date:
+                    end_date_obj = datetime.now().date()
+                else:
+                    end_date_obj = end_date.date() if isinstance(end_date, datetime) else end_date
+
+                if not start_date:
+                    start_date_obj = end_date_obj - timedelta(days=100)
+                else:
+                    start_date_obj = start_date.date() if isinstance(start_date, datetime) else start_date
+
+                # Fetch from Yahoo Finance
+                historical_data = await provider.get_historical_data(
+                    symbols=[symbol],
+                    start_date=start_date_obj,
+                    end_date=end_date_obj,
+                    region='US'
+                )
+
+                if symbol in historical_data:
+                    df = historical_data[symbol]
+                    bars = df.to_dict('records')
+
+                    logger.info(f"Broker API SUCCESS: {len(bars)} bars for {symbol}")
+
+                    # Store in database for future use (async, don't wait)
+                    async with get_db_session() as db:
+                        try:
+                            values = []
+                            for bar in bars:
+                                timestamp = bar.get('date') or bar.get('timestamp')
+                                if isinstance(timestamp, str):
+                                    timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+
+                                values.append({
+                                    'symbol': symbol,
+                                    'timeframe': timeframe,
+                                    'timestamp': timestamp,
+                                    'open': float(bar.get('open', 0)),
+                                    'high': float(bar.get('high', 0)),
+                                    'low': float(bar.get('low', 0)),
+                                    'close': float(bar.get('close', 0)),
+                                    'volume': int(bar.get('volume', 0)),
+                                    'vwap': None,
+                                    'trade_count': None
+                                })
+
+                            if values:
+                                await db.execute(text("""
+                                    INSERT INTO market_data_bars
+                                    (symbol, timeframe, timestamp, open, high, low, close, volume, vwap, trade_count)
+                                    VALUES (:symbol, :timeframe, :timestamp, :open, :high, :low, :close, :volume, :vwap, :trade_count)
+                                    ON CONFLICT (symbol, timeframe, timestamp) DO NOTHING
+                                """), values)
+                                await db.commit()
+                                logger.debug(f"Stored {len(values)} bars for {symbol} to database")
+
+                        except Exception as store_error:
+                            logger.error(f"Failed to store bars in database: {store_error}")
+
+                    # Cache in Redis
+                    if db_config.redis_client:
+                        cache_service = get_cache_service(db_config.redis_client)
+                        await cache_service.set_bars(symbol, timeframe, bars[:500])
+
+                    return bars
+
+            except Exception as api_error:
+                logger.error(f"Broker API failed for {symbol}: {api_error}")
+
+            # All tiers failed, return empty
+            logger.warning(f"All data sources failed for {symbol}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error in _get_historical_bars for {symbol}: {e}")
+            return []
+
+    @staticmethod
+    async def _fetch_cached_indicators(symbol: str, fallback_price: float) -> Dict[str, float]:
+        """
+        Three-tier indicator fetching strategy:
+        1. Try Redis cache (populated by DataAggregatorService)
+        2. Try PostgreSQL database (historical indicators)
+        3. Fallback to simulated indicators
+
+        Args:
+            symbol: Stock symbol
+            fallback_price: Price to use for simulated indicators if cache miss
+
+        Returns:
+            Dict with indicator values
+        """
+        try:
+            # Tier 1: Redis Cache
+            from services.redis_cache_service import get_cache_service
+            import config.database as db_config
+            from config.database import get_db_session
+
+            # Get cache service instance
+            if db_config.redis_client:
+                cache_service = get_cache_service(db_config.redis_client)
+
+                # Define indicators to fetch
+                indicators_to_fetch = [
+                    ('rsi', 14),
+                    ('rsi', 9),
+                    ('sma', 10),
+                    ('sma', 20),
+                    ('sma', 50),
+                    ('sma', 200),
+                    ('ema', 10),
+                    ('ema', 20),
+                    ('ema', 50),
+                    ('bb_upper', 20),
+                    ('bb_middle', 20),
+                    ('bb_lower', 20),
+                ]
+
+                # Fetch from cache
+                cached_indicators = await cache_service.get_indicators(symbol, indicators_to_fetch)
+
+                # Also fetch metadata for volume
+                metadata = await cache_service.get_symbol_metadata(symbol)
+
+                if cached_indicators:
+                    # Got cache hit - use real indicators
+                    logger.debug(f"Cache HIT for {symbol}: {len(cached_indicators)} indicators")
+
+                    # Add MACD if available
+                    macd = await cache_service.get_indicator(symbol, 'macd', 0)
+                    macd_signal = await cache_service.get_indicator(symbol, 'macd_signal', 0)
+                    macd_histogram = await cache_service.get_indicator(symbol, 'macd_histogram', 0)
+
+                    if macd is not None:
+                        cached_indicators['macd'] = macd
+                    if macd_signal is not None:
+                        cached_indicators['macd_signal'] = macd_signal
+                    if macd_histogram is not None:
+                        cached_indicators['macd_histogram'] = macd_histogram
+
+                    # Add volume from metadata
+                    if metadata and 'volume' in metadata:
+                        cached_indicators['avg_volume'] = float(metadata['volume'])
+                        cached_indicators['volume_sma_20'] = float(metadata.get('volume', 0))
+
+                    # Fill in missing indicators with simulated values (for backward compatibility)
+                    simulated = AlgorithmEngine._calculate_simulated_indicators(fallback_price)
+                    for key, value in simulated.items():
+                        if key not in cached_indicators:
+                            cached_indicators[key] = value
+
+                    return cached_indicators
+
+            # Tier 2: PostgreSQL Database (for historical indicators)
+            try:
+                async with get_db_session() as db:
+                    result = await db.execute(text("""
+                        SELECT indicator_name, indicator_value
+                        FROM market_data_indicators
+                        WHERE symbol = :symbol
+                        AND timestamp >= NOW() - INTERVAL '1 day'
+                        ORDER BY timestamp DESC
+                        LIMIT 20
+                    """), {'symbol': symbol})
+
+                    db_indicators = result.fetchall()
+
+                    if db_indicators and len(db_indicators) > 0:
+                        logger.debug(f"Database HIT: {len(db_indicators)} indicators for {symbol}")
+
+                        indicators = {}
+                        for row in db_indicators:
+                            indicators[row.indicator_name] = float(row.indicator_value)
+
+                        # Fill in missing indicators with simulated values
+                        simulated = AlgorithmEngine._calculate_simulated_indicators(fallback_price)
+                        for key, value in simulated.items():
+                            if key not in indicators:
+                                indicators[key] = value
+
+                        return indicators
+
+            except Exception as db_error:
+                logger.debug(f"Database query failed for indicators {symbol}: {db_error}")
+
+        except Exception as e:
+            logger.warning(f"Cache miss for {symbol}, using simulated indicators: {e}")
+
+        # Tier 3: Fallback to simulated indicators
+        logger.debug(f"Cache MISS and Database MISS for {symbol}, using simulated indicators")
+        return AlgorithmEngine._calculate_simulated_indicators(fallback_price)
 
     @staticmethod
     def _calculate_simulated_indicators(price: float) -> Dict[str, float]:

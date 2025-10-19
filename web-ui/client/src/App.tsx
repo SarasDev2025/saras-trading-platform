@@ -17,7 +17,6 @@ import Dashboard from "./pages/dashboard";
 import Portfolio from "./pages/portfolio";
 import Trading from "./pages/trading";
 import Algorithms from "./pages/algorithms";
-import Strategies from "./pages/strategies";
 import Analytics from "./pages/analytics";
 import Settings from "./pages/settings";
 import Smallcases from "./pages/smallcases";
@@ -71,13 +70,7 @@ function Router() {
           <Algorithms />
         </ProtectedRoute>
       </Route>
-      
-      <Route path="/strategies">
-        <ProtectedRoute>
-          <Strategies />
-        </ProtectedRoute>
-      </Route>
-      
+
       <Route path="/analytics">
         <ProtectedRoute>
           <Analytics />
@@ -95,7 +88,7 @@ function Router() {
           <Smallcases />
         </ProtectedRoute>
       </Route>
-      
+
       <Route component={NotFound} />
     </Switch>
   );

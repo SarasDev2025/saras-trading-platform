@@ -11,5 +11,9 @@ from . import (
     dividend_router,
     dividend_scheduler_router,
     gtt_router,
-    settings_router
+    settings_router,
+    backtesting_router,
+    test_management_router,
+    algorithm_router,
+    broker_config_router
 )

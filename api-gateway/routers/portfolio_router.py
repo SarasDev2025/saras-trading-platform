@@ -371,6 +371,84 @@ async def delete_portfolio(portfolio_id: str, db: AsyncSession = Depends(get_db)
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete portfolio: {str(e)}")
 
+@router.get("/{portfolio_id}/positions/grouped", response_model=APIResponse)
+async def get_portfolio_positions_grouped(portfolio_id: str, db: AsyncSession = Depends(get_db)):
+    """Get positions grouped by source type (smallcase/algorithm/manual)"""
+    try:
+        # Validate and fix portfolio ID
+        portfolio_id = validate_uuid(portfolio_id)
+
+        result = await db.execute(text("""
+            SELECT
+                ph.source_type,
+                ph.source_id,
+                a.symbol,
+                a.name as asset_name,
+                a.asset_type,
+                ph.quantity,
+                a.current_price,
+                ph.current_value as market_value,
+                ph.average_cost as cost_basis,
+                ph.unrealized_pnl,
+                CASE
+                    WHEN ph.source_type = 'smallcase' THEN sc.name
+                    WHEN ph.source_type = 'algorithm' THEN alg.name
+                    ELSE NULL
+                END as source_name
+            FROM portfolio_holdings ph
+            JOIN assets a ON ph.asset_id = a.id
+            LEFT JOIN user_smallcase_investments usi ON ph.source_id = usi.id AND ph.source_type = 'smallcase'
+            LEFT JOIN smallcases sc ON usi.smallcase_id = sc.id
+            LEFT JOIN trading_algorithms alg ON ph.source_id = alg.id AND ph.source_type = 'algorithm'
+            WHERE ph.portfolio_id = :portfolio_id
+            AND ph.quantity > 0
+            ORDER BY ph.source_type, ph.current_value DESC
+        """), {"portfolio_id": portfolio_id})
+
+        # Group results by source_type
+        grouped = {"smallcases": [], "algorithms": [], "manual": []}
+        rows = result.fetchall()
+
+        for row in rows:
+            # Calculate unrealized P&L percentage
+            unrealized_pnl_percent = 0.0
+            if row.cost_basis and float(row.cost_basis) > 0:
+                unrealized_pnl_percent = (float(row.unrealized_pnl or 0) / float(row.cost_basis)) * 100
+
+            position_data = {
+                "id": f"{portfolio_id}-{row.symbol}",
+                "symbol": row.symbol,
+                "asset_name": row.asset_name,
+                "assetType": row.asset_type,
+                "quantity": float(row.quantity),
+                "avgPrice": float(row.cost_basis) if row.cost_basis else 0.0,
+                "currentPrice": float(row.current_price) if row.current_price else 0.0,
+                "marketValue": float(row.market_value) if row.market_value else 0.0,
+                "unrealizedPnL": float(row.unrealized_pnl) if row.unrealized_pnl else 0.0,
+                "unrealized_pnl_percent": unrealized_pnl_percent,
+                "source_name": row.source_name,
+                "source_id": str(row.source_id) if row.source_id else None,
+                # Keep snake_case versions for backward compatibility
+                "asset_type": row.asset_type,
+                "current_price": float(row.current_price) if row.current_price else 0.0,
+                "market_value": float(row.market_value) if row.market_value else 0.0,
+                "cost_basis": float(row.cost_basis) if row.cost_basis else 0.0,
+                "unrealized_pnl": float(row.unrealized_pnl) if row.unrealized_pnl else 0.0
+            }
+
+            # Add to appropriate group
+            source_type = row.source_type or 'manual'
+            if source_type == 'smallcase':
+                grouped["smallcases"].append(position_data)
+            elif source_type == 'algorithm':
+                grouped["algorithms"].append(position_data)
+            else:
+                grouped["manual"].append(position_data)
+
+        return APIResponse(success=True, data=grouped)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch grouped positions: {str(e)}")
+
 @router.get("/{portfolio_id}/positions", response_model=APIResponse)
 async def get_portfolio_positions(portfolio_id: str, db: AsyncSession = Depends(get_db)):
     """Get positions for a specific portfolio"""

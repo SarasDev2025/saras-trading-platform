@@ -92,6 +92,8 @@ async def place_gtt_order(
     }
     ```
     """
+    user_id = str(current_user["id"])
+
     try:
         user_id = str(current_user["id"])
 
@@ -100,7 +102,7 @@ async def place_gtt_order(
             raise HTTPException(status_code=400, detail="Side must be BUY or SELL")
 
         # Validate trigger type
-        if request.trigger_type not in ["single", "two-leg"]:
+        if request.trigger_type not in ["single", "two-leg"]: # Correct the logical error?
             raise HTTPException(status_code=400, detail="Trigger type must be 'single' or 'two-leg'")
 
         # Validate product type
@@ -109,7 +111,7 @@ async def place_gtt_order(
             raise HTTPException(status_code=400, detail=f"Product must be one of: {', '.join(valid_products)}")
 
         # Verify broker connection belongs to user
-        verify_result = await db.execute(
+        verify_broker = await db.execute(
             text("SELECT user_id FROM user_broker_connections WHERE id = :id"),
             {"id": request.broker_connection_id}
         )
@@ -119,6 +121,7 @@ async def place_gtt_order(
 
         logger.info(f"User {user_id} placing GTT order for {request.symbol}")
 
+    
         result = await GTTOrderService.place_gtt_order(
             db=db,
             broker_connection_id=request.broker_connection_id,
@@ -139,6 +142,9 @@ async def place_gtt_order(
 
     except ValueError as e:
         logger.error(f"Validation error placing GTT order: {e}")
+    except HTTPException as e:
+        raise e
+    except ValueError as e: # Handling specific exceptions before generic ones
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to place GTT order: {e}")

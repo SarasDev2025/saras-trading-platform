@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import redis.asyncio as redis
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -18,7 +19,7 @@ from sqlalchemy import text  # Add this line
 from config.database import Base, get_db
 from routers import (
     auth_router, portfolio_router, alpaca_router, info_router,
-    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router, settings_router, broker_config_router, algorithm_router
+    trade_router, smallcase_router, rebalancing_router, broker_router, dividend_router, dividend_scheduler_router, gtt_router, settings_router, broker_config_router, algorithm_router, backtesting_router, test_management_router
 )
 from brokers import initialize_brokers, cleanup_brokers, broker_manager
 from middleware.auth_middleware import AuthAuditMiddleware
@@ -187,17 +188,56 @@ async def _start_background_tasks():
         await start_scheduler()
         logger.info("✅ Algorithm scheduler initialized")
 
+        # Initialize data aggregation services (Redis cache + background fetching)
+        try:
+            from services.redis_cache_service import get_cache_service
+            from services.symbol_subscription_manager import get_subscription_manager
+            from services.data_aggregator_service import get_aggregator_service
+
+            # Initialize cache service
+            cache_service = get_cache_service(redis_client)
+            logger.info("✅ Redis cache service initialized")
+
+            # Initialize subscription manager
+            subscription_manager = get_subscription_manager(redis_client)
+            await subscription_manager.initialize()
+            logger.info("✅ Symbol subscription manager initialized")
+
+            # Initialize and start data aggregator service
+            aggregator_service = await get_aggregator_service(
+                cache_service=cache_service,
+                subscription_manager=subscription_manager,
+                db_session_factory=async_session
+            )
+            await aggregator_service.start()
+            logger.info("✅ Data aggregator service started")
+
+        except Exception as e:
+            logger.error(f"⚠️ Failed to initialize data aggregation services: {e}")
+            # Continue startup even if data aggregation fails
+
         # You can add more background tasks here like:
         # - Cleaning old audit logs
         # - Refreshing security metrics
         # - Monitoring suspicious activities
         logger.info("✅ Background tasks started")
     except Exception as e:
+        import traceback
         logger.error(f"⚠️ Failed to start background tasks: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 async def _stop_background_tasks():
     """Stop background tasks"""
     try:
+        # Stop data aggregator service
+        try:
+            from services.data_aggregator_service import get_aggregator_service
+            aggregator_service = await get_aggregator_service()
+            await aggregator_service.stop()
+            logger.info("✅ Data aggregator service stopped")
+        except Exception as e:
+            logger.debug(f"Data aggregator not running or already stopped: {e}")
+
         # Stop dividend scheduler
         from services.dividend_scheduler import get_dividend_scheduler
         try:
@@ -438,6 +478,16 @@ app.include_router(trade_router.router, prefix="/api/v1", tags=["Trading"])
 app.include_router(alpaca_router.router, prefix="/api/v1", tags=["Alpaca"])
 app.include_router(info_router.router, prefix="/api/v1", tags=["Market Info"])
 app.include_router(algorithm_router.router, prefix="/api/v1/algorithms", tags=["Algorithm Trading"])
+app.include_router(backtesting_router.router, prefix="/api/v1", tags=["Backtesting"])
+app.include_router(test_management_router.router, prefix="/api/v1", tags=["Test Management"])
+
+# Test Runner HTML endpoint
+@app.get("/test-runner")
+async def test_runner_page():
+    """Serve the standalone test runner HTML page"""
+    from pathlib import Path
+    html_file = Path(__file__).parent / "static" / "test-runner.html"
+    return FileResponse(html_file)
 
 # Root endpoint
 @app.get("/")
@@ -448,7 +498,8 @@ async def root():
         "version": "2.0.0",
         "status": "running",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "test_runner": "/test-runner"
     }
 
 # Startup event logging

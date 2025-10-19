@@ -4,7 +4,6 @@ import {
   Wallet,
   TrendingUp,
   Bot,
-  Target,
   BarChart3,
   Settings,
   LogOut,
@@ -20,7 +19,6 @@ const navigation = [
   { name: "Trading", href: "/trading", icon: TrendingUp },
   { name: "Smallcases", href: "/smallcases", icon: Package },
   { name: "Algorithms", href: "/algorithms", icon: Bot },
-  { name: "Strategies", href: "/strategies", icon: Target },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

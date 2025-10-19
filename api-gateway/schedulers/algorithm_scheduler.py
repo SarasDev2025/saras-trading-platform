@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.algorithm_engine import AlgorithmEngine
 from services.signal_processor import SignalProcessor
-from database import get_db_session
+from config.database import get_db_session
 from schedulers.flexible_scheduler import FlexibleSchedulerMixin
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class AlgorithmScheduler(FlexibleSchedulerMixin):
 
     async def _check_and_execute_algorithms(self):
         """Check for algorithms that need to be executed"""
-        async for db in get_db_session():
+        async with get_db_session() as db:
             try:
                 # Get all active algorithms with auto_run enabled
                 result = await db.execute(text("""
@@ -202,8 +202,6 @@ class AlgorithmScheduler(FlexibleSchedulerMixin):
 
             except Exception as e:
                 logger.error(f"Error in scheduler check: {e}")
-            finally:
-                await db.close()
 
     def _is_market_open(self, region: str) -> bool:
         """Check if market is currently open for the given region"""

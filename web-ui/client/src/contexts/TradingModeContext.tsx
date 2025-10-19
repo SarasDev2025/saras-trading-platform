@@ -58,7 +58,7 @@ export const TradingModeProvider: React.FC<{ children: ReactNode }> = ({ childre
 
         // Invalidate all queries to refetch with new mode
         queryClient.invalidateQueries({ queryKey: ['/api/portfolios'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/portfolios/cash-balance'] });
+        queryClient.invalidateQueries({ queryKey: ['portfolios', 'cash-balance'] });
         queryClient.invalidateQueries({ queryKey: ['/api/smallcases'] });
         queryClient.invalidateQueries({ queryKey: ['/api/trades'] });
 

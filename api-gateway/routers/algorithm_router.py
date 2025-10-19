@@ -1429,3 +1429,226 @@ async def suggest_strategies(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =====================================================
+# Performance Analytics Endpoints
+# =====================================================
+
+@router.get("/{algorithm_id}/performance", response_model=APIResponse)
+async def get_algorithm_performance(
+    algorithm_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    benchmark_symbol: str = Query('SPY', description="Benchmark symbol for comparison")
+):
+    """
+    Get comprehensive performance metrics for an algorithm
+
+    Returns:
+    - Return metrics (total return, CAGR, daily/monthly returns)
+    - Risk metrics (Sharpe, Sortino, max drawdown, volatility, beta, alpha)
+    - Trade metrics (win rate, profit factor, expectancy, payoff ratio)
+    - Equity curve data
+    """
+    try:
+        from services.performance_analytics import get_performance_analytics
+        from config.database import async_session
+
+        user_id = current_user["id"]
+
+        # Verify ownership
+        result = await db.execute(text("""
+            SELECT id FROM trading_algorithms
+            WHERE id = :algorithm_id AND user_id = :user_id
+        """), {"algorithm_id": algorithm_id, "user_id": user_id})
+
+        if not result.fetchone():
+            raise HTTPException(status_code=404, detail="Algorithm not found")
+
+        # Get performance analytics service
+        analytics = await get_performance_analytics(db_session_factory=async_session)
+
+        # Calculate performance metrics
+        start_dt = datetime.combine(start_date, datetime.min.time()) if start_date else None
+        end_dt = datetime.combine(end_date, datetime.max.time()) if end_date else None
+
+        performance = await analytics.calculate_algorithm_performance(
+            algorithm_id=algorithm_id,
+            start_date=start_dt,
+            end_date=end_dt,
+            benchmark_symbol=benchmark_symbol
+        )
+
+        return APIResponse(success=True, data=performance)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get algorithm performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{algorithm_id}/equity-curve", response_model=APIResponse)
+async def get_equity_curve(
+    algorithm_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None)
+):
+    """
+    Get equity curve data for an algorithm
+
+    Returns time series of portfolio value over time
+    """
+    try:
+        user_id = current_user["id"]
+
+        # Verify ownership
+        result = await db.execute(text("""
+            SELECT id FROM trading_algorithms
+            WHERE id = :algorithm_id AND user_id = :user_id
+        """), {"algorithm_id": algorithm_id, "user_id": user_id})
+
+        if not result.fetchone():
+            raise HTTPException(status_code=404, detail="Algorithm not found")
+
+        # Build query
+        query = """
+            SELECT
+                snapshot_date as date,
+                total_value as equity,
+                cumulative_pnl,
+                daily_pnl
+            FROM algorithm_performance_snapshots
+            WHERE algorithm_id = :algorithm_id
+        """
+
+        params = {"algorithm_id": algorithm_id}
+
+        if start_date:
+            query += " AND snapshot_date >= :start_date"
+            params["start_date"] = start_date
+
+        if end_date:
+            query += " AND snapshot_date <= :end_date"
+            params["end_date"] = end_date
+
+        query += " ORDER BY snapshot_date ASC"
+
+        result = await db.execute(text(query), params)
+
+        equity_curve = []
+        for row in result.fetchall():
+            equity_curve.append({
+                "date": row.date.isoformat(),
+                "equity": float(row.equity),
+                "cumulative_pnl": float(row.cumulative_pnl) if row.cumulative_pnl else 0,
+                "daily_pnl": float(row.daily_pnl) if row.daily_pnl else 0
+            })
+
+        return APIResponse(
+            success=True,
+            data={
+                "equity_curve": equity_curve,
+                "data_points": len(equity_curve)
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get equity curve: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{algorithm_id}/trade-history", response_model=APIResponse)
+async def get_trade_history(
+    algorithm_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """
+    Get trade history for an algorithm
+
+    Returns list of executed trades with P&L information
+    """
+    try:
+        user_id = current_user["id"]
+
+        # Verify ownership
+        result = await db.execute(text("""
+            SELECT id FROM trading_algorithms
+            WHERE id = :algorithm_id AND user_id = :user_id
+        """), {"algorithm_id": algorithm_id, "user_id": user_id})
+
+        if not result.fetchone():
+            raise HTTPException(status_code=404, detail="Algorithm not found")
+
+        # Get trades
+        result = await db.execute(text("""
+            SELECT
+                id,
+                symbol,
+                action,
+                quantity,
+                executed_price,
+                total_amount,
+                pnl,
+                executed_at,
+                status
+            FROM trades
+            WHERE algorithm_id = :algorithm_id
+            AND status = 'executed'
+            ORDER BY executed_at DESC
+            LIMIT :limit OFFSET :offset
+        """), {
+            "algorithm_id": algorithm_id,
+            "limit": limit,
+            "offset": offset
+        })
+
+        trades = []
+        for row in result.fetchall():
+            trades.append({
+                "id": str(row.id),
+                "symbol": row.symbol,
+                "action": row.action,
+                "quantity": float(row.quantity),
+                "executed_price": float(row.executed_price) if row.executed_price else 0,
+                "total_amount": float(row.total_amount) if row.total_amount else 0,
+                "pnl": float(row.pnl) if row.pnl else 0,
+                "executed_at": row.executed_at.isoformat(),
+                "status": row.status
+            })
+
+        # Get total count
+        count_result = await db.execute(text("""
+            SELECT COUNT(*) as total
+            FROM trades
+            WHERE algorithm_id = :algorithm_id
+            AND status = 'executed'
+        """), {"algorithm_id": algorithm_id})
+
+        total = count_result.fetchone().total
+
+        return APIResponse(
+            success=True,
+            data={
+                "trades": trades,
+                "total": total,
+                "limit": limit,
+                "offset": offset
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get trade history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+

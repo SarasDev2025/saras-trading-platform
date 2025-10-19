@@ -3,6 +3,8 @@ import { Header } from "@/components/layout/header";
 import { PortfolioOverview } from "@/components/dashboard/portfolio-overview";
 import { PortfolioChart } from "@/components/dashboard/portfolio-chart";
 import { AssetAllocation } from "@/components/dashboard/asset-allocation";
+import { SmallcaseInvestments } from "@/components/dashboard/smallcase-investments";
+import { AlgorithmStatus } from "@/components/dashboard/algorithm-status";
 import { RecentTrades } from "@/components/dashboard/recent-trades";
 import { QuickTradeModal } from "@/components/trading/quick-trade-modal";
 import { Button } from "@/components/ui/button";
@@ -24,7 +26,7 @@ export default function Dashboard() {
         
         <div className="p-6 h-full overflow-y-auto">
           <PortfolioOverview />
-          
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
             <div className="lg:col-span-2">
               <PortfolioChart />
@@ -33,7 +35,15 @@ export default function Dashboard() {
               <AssetAllocation />
             </div>
           </div>
-          
+
+          <div className="mb-8">
+            <SmallcaseInvestments />
+          </div>
+
+          <div className="mb-8">
+            <AlgorithmStatus />
+          </div>
+
           <RecentTrades />
         </div>
       </main>

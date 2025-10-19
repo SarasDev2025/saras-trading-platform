@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/axios";
 
 interface BuyingPowerData {
   portfolio_id: string;
@@ -27,9 +28,26 @@ export function useBuyingPowerCheck() {
 
   // Fetch current cash balance
   // Note: queryClient.ts already unwraps the response, so we get BuyingPowerData directly
-  const { data: buyingPowerData, refetch: refetchBuyingPower, error, isError, isLoading } = useQuery<BuyingPowerData>({
-    queryKey: ["/api/portfolios/cash-balance"],
+  const {
+    data: buyingPowerData,
+    refetch: refetchBuyingPower,
+    error,
+    isError,
+    isLoading
+  } = useQuery<BuyingPowerData>({
+    queryKey: ["portfolios", "cash-balance"],
     staleTime: 0, // Always fetch fresh data for buying power checks
+    queryFn: async () => {
+      const response = await apiRequest.get<{ success: boolean; data?: BuyingPowerData; message?: string }>(
+        "/portfolios/cash-balance"
+      );
+
+      if (!response.data?.success || !response.data.data) {
+        throw new Error(response.data?.message || "Failed to load cash balance");
+      }
+
+      return response.data.data;
+    },
   });
 
   // Log query state for debugging

@@ -7,6 +7,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { AddFundsModal } from "./add-funds-modal";
 import { useToast } from "@/hooks/use-toast";
+import { api } from "@/lib/api";
+
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+  error?: string;
+}
+
+interface Position {
+  id: string;
+  symbol: string;
+  quantity: number;
+}
+
+interface BuyingPowerData {
+  portfolio_id: string;
+  cash_balance: number;
+  buying_power: number;
+  total_value: number;
+}
 
 export function PortfolioOverview() {
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
@@ -17,8 +37,35 @@ export function PortfolioOverview() {
   });
 
   // Fetch cash balance separately for paper trading
-  const { data: cashBalanceData, isLoading: isCashLoading } = useQuery({
-    queryKey: ["/api/portfolios/cash-balance"],
+  const { data: cashBalanceResponse, isLoading: isCashLoading } = useQuery<ApiResponse<BuyingPowerData>>({
+    queryKey: ["portfolios", "cash-balance"],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<BuyingPowerData>>("/portfolios/cash-balance");
+      return response.data;
+    },
+  });
+
+  // Fetch active positions count across all portfolios
+  const { data: activePositionsCount = 0, isLoading: isLoadingPositions } = useQuery<number>({
+    queryKey: ["active-positions-count", portfolios],
+    enabled: !!portfolios && portfolios.length > 0,
+    queryFn: async (): Promise<number> => {
+      if (!portfolios || portfolios.length === 0) return 0;
+
+      try {
+        // Fetch positions for all portfolios
+        const positionPromises = portfolios.map(async (portfolio) => {
+          const res = await api.get<ApiResponse<Position[]>>(`/portfolios/${portfolio.id}/positions`);
+          return res.data?.data?.length || 0;
+        });
+
+        const counts = await Promise.all(positionPromises);
+        return counts.reduce((sum, count) => sum + count, 0);
+      } catch (error) {
+        console.error('[PortfolioOverview] Error fetching positions:', error);
+        return 0;
+      }
+    },
   });
 
   // Check for pending orders on mount and after funds are added
@@ -68,9 +115,10 @@ export function PortfolioOverview() {
   const dayPnLPercent = 0; // TODO: Calculate from positions
 
   // Use cash balance from dedicated endpoint if available, otherwise fallback to portfolio data
-  const cashAvailable = cashBalanceData?.data?.cash_balance || portfolio.cash_balance || 0;
-  const buyingPower = cashBalanceData?.data?.buying_power || cashAvailable;
-  const portfolioId = cashBalanceData?.data?.portfolio_id || portfolio.id;
+  const cashBalanceData = cashBalanceResponse?.data;
+  const cashAvailable = cashBalanceData?.cash_balance ?? portfolio.cash_balance ?? 0;
+  const buyingPower = cashBalanceData?.buying_power ?? cashAvailable;
+  const portfolioId = cashBalanceData?.portfolio_id ?? portfolio.id;
   const cashPercent = totalValue > 0 ? ((cashAvailable / totalValue) * 100).toFixed(2) : "0";
 
   return (
@@ -116,9 +164,17 @@ export function PortfolioOverview() {
             <h3 className="text-sm font-medium text-gray-400">Active Positions</h3>
             <List className="w-4 h-4 carbon-blue" />
           </div>
-          <div className="text-2xl font-bold text-white">247</div>
+          <div className="text-2xl font-bold text-white">
+            {isLoadingPositions ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              activePositionsCount
+            )}
+          </div>
           <div className="flex items-center mt-2">
-            <span className="text-gray-400 text-sm">Across 8 strategies</span>
+            <span className="text-gray-400 text-sm">
+              Across {portfolios?.length || 0} {portfolios?.length === 1 ? 'portfolio' : 'portfolios'}
+            </span>
           </div>
         </CardContent>
       </Card>

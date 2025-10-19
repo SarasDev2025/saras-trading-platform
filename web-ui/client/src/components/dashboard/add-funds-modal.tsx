@@ -33,7 +33,7 @@ export function AddFundsModal({ isOpen, onClose, portfolioId, currentBalance }: 
         title: "Funds Added Successfully",
         description: `Added $${parseFloat(amount).toLocaleString()} to your portfolio`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolios/cash-balance"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolios", "cash-balance"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
       setAmount("");
       onClose();

@@ -1,6 +1,7 @@
 """
 Trading service for managing trading transactions
 """
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -15,6 +16,10 @@ from models import (
     TransactionType, TransactionStatus, OrderType
 )
 from config.database import get_db_session, DatabaseQuery, CacheManager
+from services.portfolio_performance_service import PortfolioPerformanceService
+from services.trade_execution_service import TradingExecutionService
+
+logger = logging.getLogger(__name__)
 
 
 class TradingService:
@@ -66,8 +71,20 @@ class TradingService:
             session.add(transaction)
             await session.flush()  # Get the transaction ID
 
-            # Execute the transaction
+            # Execute the transaction using existing immediate logic
             await TradingService._execute_transaction(session, transaction)
+
+            # Normalise finalisation through the shared execution service so
+            # that future broker fills can reuse the same flow.
+            await TradingExecutionService.finalize_fill(
+                session=session,
+                transaction=transaction,
+                filled_quantity=transaction.quantity,
+                fill_price=transaction.price_per_unit,
+                fees=transaction.fees or Decimal("0"),
+                fill_status=transaction.status,
+                fill_metadata={"source": "manual_trading_service"},
+            )
 
             await session.commit()
             await session.refresh(transaction)

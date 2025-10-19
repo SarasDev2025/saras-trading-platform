@@ -27,6 +27,7 @@ from models import (
     UserSmallcaseInvestment,
 )
 from services.broker_connection_service import BrokerConnectionService
+from services.trade_execution_service import TradingExecutionService
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -467,6 +468,19 @@ class OrderAggregationService:
                 )
 
                 db.add(transaction)
+
+                await TradingExecutionService.finalize_fill(
+                    session=db,
+                    transaction=transaction,
+                    filled_quantity=quantity,
+                    fill_price=price,
+                    fees=Decimal("0"),
+                    fill_status=TransactionStatus.EXECUTED,
+                    fill_metadata={
+                        "source": "aggregated_order",
+                        "aggregated_order_id": aggregated_order.broker_order_id,
+                    },
+                )
 
                 logger.info(
                     f"[OrderAggregation] Created transaction for user {user_id}: "

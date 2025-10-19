@@ -1,6 +1,7 @@
 """
 Portfolio performance service for tracking and calculating portfolio metrics
 """
+import logging
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
@@ -12,8 +13,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.database import get_db_session
 
 
+logger = logging.getLogger(__name__)
+
+
 class PortfolioPerformanceService:
     """Service class for portfolio performance tracking and calculations"""
+
+    @staticmethod
+    async def refresh_snapshot(
+        portfolio_id: uuid.UUID,
+        user_id: Optional[uuid.UUID] = None
+    ) -> None:
+        """
+        Ensure the latest daily snapshot exists for the given portfolio.
+
+        Opens a fresh DB session to avoid interfering with active transactions.
+        """
+        async with get_db_session() as session:
+            resolved_portfolio_id = uuid.UUID(str(portfolio_id))
+
+            resolved_user_id = uuid.UUID(str(user_id)) if user_id else None
+            if resolved_user_id is None:
+                result = await session.execute(
+                    text("SELECT user_id FROM portfolios WHERE id = :portfolio_id"),
+                    {"portfolio_id": str(resolved_portfolio_id)}
+                )
+                row = result.fetchone()
+                if not row or not row.user_id:
+                    return
+                resolved_user_id = uuid.UUID(str(row.user_id))
+
+            await PortfolioPerformanceService.calculate_daily_snapshot(
+                session,
+                resolved_portfolio_id,
+                resolved_user_id
+            )
 
     @staticmethod
     async def calculate_daily_snapshot(
@@ -213,6 +247,22 @@ class PortfolioPerformanceService:
         else:
             # Default to 1 day
             start_date = today - timedelta(days=1)
+
+        # Ensure today's snapshot exists so charts include latest data
+        try:
+            await PortfolioPerformanceService.calculate_daily_snapshot(
+                db,
+                portfolio_id,
+                user_id,
+                snapshot_date=today
+            )
+        except Exception as snapshot_error:
+            # Do not fail the performance request if snapshot update fails
+            logger.warning(
+                "Failed to create today's snapshot for portfolio %s: %s",
+                portfolio_id,
+                snapshot_error
+            )
 
         # Fetch snapshots for the time period
         snapshots_query = await db.execute(

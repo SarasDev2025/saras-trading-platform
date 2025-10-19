@@ -25,6 +25,7 @@ from services.order_aggregation_service import OrderAggregationService
 from services.dividend_service import DividendService
 from services.broker_selection_service import BrokerSelectionService
 from services.market_hours_service import get_market_status
+from services.portfolio_performance_service import PortfolioPerformanceService
 
 router = APIRouter(tags=["smallcases"])
 logger = logging.getLogger(__name__)
@@ -586,6 +587,18 @@ async def invest_in_smallcase(
         print(f"💰 Deducted ${investment_amount} from portfolio cash balance")
 
         await db.commit()
+
+        try:
+            await PortfolioPerformanceService.refresh_snapshot(
+                uuid.UUID(portfolio_id),
+                uuid.UUID(user_id)
+            )
+        except Exception as snapshot_error:
+            logger.warning(
+                "Failed to refresh performance snapshot after smallcase investment %s: %s",
+                investment_id,
+                snapshot_error
+            )
 
         # Prepare success message based on market status
         base_msg = f"Successfully invested ${investment_amount} in {smallcase_row.name}"

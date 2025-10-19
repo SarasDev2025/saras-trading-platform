@@ -1,6 +1,7 @@
 """
 Portfolio service for managing portfolio operations
 """
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,6 +13,9 @@ from sqlalchemy.orm import selectinload
 
 from models import Portfolio, PortfolioHolding, Asset, User, TradingTransaction, TransactionStatus
 from config.database import get_db_session, DatabaseQuery, CacheManager
+from services.portfolio_performance_service import PortfolioPerformanceService
+
+logger = logging.getLogger(__name__)
 
 
 class PortfolioService:
@@ -32,6 +36,18 @@ class PortfolioService:
             session.add(portfolio)
             await session.commit()
             await session.refresh(portfolio)
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(
+                    portfolio.id,
+                    portfolio.user_id
+                )
+            except Exception as snapshot_error:
+                logger.warning(
+                    "Snapshot refresh failed after portfolio creation %s: %s",
+                    portfolio.id,
+                    snapshot_error
+                )
             
             return portfolio
 
@@ -158,7 +174,18 @@ class PortfolioService:
             result = await session.execute(
                 select(Portfolio).where(Portfolio.id == portfolio_id)
             )
-            return result.scalar_one_or_none()
+            portfolio = result.scalar_one_or_none()
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(portfolio_id)
+            except Exception as snapshot_error:
+                logger.warning(
+                    "Snapshot refresh failed after adding cash to portfolio %s: %s",
+                    portfolio_id,
+                    snapshot_error
+                )
+
+            return portfolio
 
     @staticmethod
     async def add_cash(portfolio_id: uuid.UUID, amount: Decimal) -> Optional[Portfolio]:
@@ -170,6 +197,7 @@ class PortfolioService:
                 .values(
                     cash_balance=Portfolio.cash_balance + amount,
                     total_value=Portfolio.total_value + amount,
+                    total_deposits=Portfolio.total_deposits + amount,
                     updated_at=datetime.now(timezone.utc)
                 )
             )
@@ -181,7 +209,18 @@ class PortfolioService:
             result = await session.execute(
                 select(Portfolio).where(Portfolio.id == portfolio_id)
             )
-            return result.scalar_one_or_none()
+            portfolio = result.scalar_one_or_none()
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(portfolio_id)
+            except Exception as snapshot_error:
+                logger.warning(
+                    "Snapshot refresh failed after adding cash to portfolio %s: %s",
+                    portfolio_id,
+                    snapshot_error
+                )
+
+            return portfolio
 
     @staticmethod
     async def withdraw_cash(portfolio_id: uuid.UUID, amount: Decimal) -> Portfolio:
@@ -206,6 +245,7 @@ class PortfolioService:
                 .values(
                     cash_balance=Portfolio.cash_balance - amount,
                     total_value=Portfolio.total_value - amount,
+                    total_withdrawals=Portfolio.total_withdrawals + amount,
                     updated_at=datetime.now(timezone.utc)
                 )
             )
@@ -217,7 +257,18 @@ class PortfolioService:
             result = await session.execute(
                 select(Portfolio).where(Portfolio.id == portfolio_id)
             )
-            return result.scalar_one()
+            portfolio = result.scalar_one()
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(portfolio_id)
+            except Exception as snapshot_error:
+                logger.warning(
+                    "Snapshot refresh failed after withdrawing cash from portfolio %s: %s",
+                    portfolio_id,
+                    snapshot_error
+                )
+
+            return portfolio
 
     @staticmethod
     async def get_performance_metrics(portfolio_id: uuid.UUID, period: str = "30d") -> Dict[str, Any]:
@@ -491,6 +542,7 @@ class PortfolioService:
                 .values(
                     cash_balance=new_cash_balance,
                     total_value=new_total_value,
+                    total_deposits=Portfolio.total_deposits + amount,
                     updated_at=datetime.now(timezone.utc)
                 )
             )
@@ -533,7 +585,18 @@ class PortfolioService:
             result = await session.execute(
                 select(Portfolio).where(Portfolio.id == portfolio_id)
             )
-            return result.scalar_one()
+            portfolio = result.scalar_one()
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(portfolio_id, user_id)
+            except Exception as snapshot_error:
+                logger.warning(
+                    "Snapshot refresh failed after adding funds to portfolio %s: %s",
+                    portfolio_id,
+                    snapshot_error
+                )
+
+            return portfolio
 
     @staticmethod
     async def get_diversification_score(portfolio_id: uuid.UUID) -> Dict[str, Any]:

@@ -29,9 +29,45 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+from services.algorithm_sandbox import AlgorithmSandbox, AlgorithmSandboxError
+from services.signal_processor import SignalProcessor
+
 
 class AlgorithmEngine:
     """Core engine for executing trading algorithms"""
+
+    @staticmethod
+    def _ensure_list(value: Any, default: Optional[List[str]] = None) -> List[str]:
+        if value is None:
+            return default or []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+                if isinstance(decoded, list):
+                    return decoded
+                if decoded is None:
+                    return default or []
+                return [decoded]
+            except json.JSONDecodeError:
+                return [item.strip() for item in value.split(',') if item.strip()]
+        return list(value) if isinstance(value, tuple) else [value]
+
+    @staticmethod
+    def _ensure_dict(value: Any, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if value is None:
+            return default.copy() if default else {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+                if isinstance(decoded, dict):
+                    return decoded
+            except json.JSONDecodeError:
+                pass
+        return default.copy() if default else {}
 
     @staticmethod
     async def execute_algorithm(
@@ -72,6 +108,10 @@ class AlgorithmEngine:
             if not algo:
                 raise ValueError(f"Algorithm {algorithm_id} not found for user {user_id}")
 
+            allowed_regions = AlgorithmEngine._ensure_list(algo.allowed_regions)
+            allowed_trading_modes = AlgorithmEngine._ensure_list(algo.allowed_trading_modes)
+            parameters = AlgorithmEngine._ensure_dict(algo.parameters)
+
             if algo.status != 'active' and execution_type == 'scheduled':
                 raise ValueError(f"Algorithm is not active (status: {algo.status})")
 
@@ -90,16 +130,16 @@ class AlgorithmEngine:
             user_trading_mode = user.trading_mode
 
             # 3. Validate region/mode compatibility
-            if user_region not in algo.allowed_regions:
+            if allowed_regions and user_region not in allowed_regions:
                 raise ValueError(
                     f"Algorithm not compatible with region {user_region}. "
-                    f"Allowed: {algo.allowed_regions}"
+                    f"Allowed: {allowed_regions}"
                 )
 
-            if user_trading_mode not in algo.allowed_trading_modes:
+            if allowed_trading_modes and user_trading_mode not in allowed_trading_modes:
                 raise ValueError(
                     f"Algorithm not compatible with trading mode {user_trading_mode}. "
-                    f"Allowed: {algo.allowed_trading_modes}"
+                    f"Allowed: {allowed_trading_modes}"
                 )
 
             # 4. Determine broker
@@ -152,10 +192,10 @@ class AlgorithmEngine:
             await db.commit()
 
             # 7. Parse stock universe
-            import json
-            stock_universe = algo.stock_universe or {"type": "all", "symbols": [], "filters": {}}
-            if isinstance(stock_universe, str):
-                stock_universe = json.loads(stock_universe)
+            stock_universe = AlgorithmEngine._ensure_dict(
+                algo.stock_universe,
+                default={"type": "all", "symbols": [], "filters": {}}
+            )
 
             # 8. Execute algorithm code
             logger.info(f"Executing algorithm {algo.name} for user {user_id} via {broker}")
@@ -163,7 +203,7 @@ class AlgorithmEngine:
             signals = await AlgorithmEngine._run_algorithm_code(
                 db=db,
                 algorithm_code=algo.strategy_code,
-                parameters=algo.parameters or {},
+                parameters=parameters,
                 user_id=user_id,
                 portfolio_id=portfolio.id,
                 broker=broker,
@@ -171,6 +211,18 @@ class AlgorithmEngine:
                 max_positions=algo.max_positions,
                 risk_per_trade=algo.risk_per_trade,
                 stock_universe=stock_universe
+            )
+
+            signal_processing = await SignalProcessor.process_signals(
+                db=db,
+                algorithm_id=algorithm_id,
+                execution_id=execution_id,
+                signals=signals,
+                user_id=user_id,
+                portfolio_id=portfolio.id,
+                broker=broker,
+                trading_mode=user_trading_mode,
+                dry_run=dry_run
             )
 
             # 8. Update execution record
@@ -217,7 +269,8 @@ class AlgorithmEngine:
                 "broker": broker,
                 "trading_mode": user_trading_mode,
                 "duration_ms": duration_ms,
-                "dry_run": dry_run
+                "dry_run": dry_run,
+                "signal_processing": signal_processing
             }
 
         except Exception as e:
@@ -335,7 +388,7 @@ class AlgorithmEngine:
 
         # Prepare context for algorithm
         context = {
-            'parameters': parameters,
+            'parameters': parameters.copy(),
             'positions': positions,
             'market_data': market_data,
             'max_positions': max_positions,
@@ -370,14 +423,18 @@ class AlgorithmEngine:
             algorithm_globals['ta'] = ta
 
         try:
-            # Execute algorithm code
-            exec(algorithm_code, algorithm_globals, context)
+            # Execute algorithm code inside sandbox
+            await AlgorithmSandbox.execute(
+                code=algorithm_code,
+                extra_globals=algorithm_globals,
+                local_context=context
+            )
 
             return context['signals']
 
-        except Exception as e:
-            logger.error(f"Algorithm code execution failed: {e}")
-            raise RuntimeError(f"Algorithm execution error: {str(e)}")
+        except AlgorithmSandboxError as exc:
+            logger.error("Algorithm code execution failed: %s", exc)
+            raise RuntimeError(f"Algorithm execution error: {str(exc)}") from exc
 
     @staticmethod
     async def _get_current_positions(

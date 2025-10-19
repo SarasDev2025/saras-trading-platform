@@ -19,35 +19,44 @@ INSERT INTO algorithm_templates (
 # Buy when short SMA crosses above long SMA
 # Sell when short SMA crosses below long SMA
 
-import pandas as pd
-
 short_period = parameters.get(''short_period'', 10)
 long_period = parameters.get(''long_period'', 20)
 position_size = parameters.get(''position_size'', 10)
 
 for symbol, data in market_data.items():
-    # Skip if we already have max positions
-    if len(positions) >= max_positions:
-        break
+    indicators = data.get(''indicators'', {})
+    short_sma = indicators.get(f''sma_{short_period}'')
+    long_sma = indicators.get(f''sma_{long_period}'')
 
-    # For demo: use simple threshold logic
-    # In production, you would calculate actual SMAs from historical data
+    if short_sma is None or long_sma is None:
+        continue
+
     current_price = data.get(''price'', 0)
-
     if current_price == 0:
         continue
 
-    # Check if we have a position
     existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    open_positions = sum(1 for p in positions if p.get(''quantity'', 0) > 0)
 
-    # Simple buy logic (placeholder for actual SMA crossover)
-    if not existing_position and current_price > 100:
-        generate_signal(
-            symbol=symbol,
-            signal_type=''buy'',
-            quantity=position_size,
-            reason=f''SMA crossover buy signal at ${current_price}''
-        )',
+    if existing_position:
+        if short_sma < long_sma:
+            generate_signal(
+                symbol=symbol,
+                signal_type=''sell'',
+                quantity=existing_position[''quantity''],
+                reason=f''Short SMA crossed below long SMA at ${current_price}''
+            )
+    else:
+        if open_positions >= max_positions:
+            continue
+
+        if short_sma > long_sma:
+            generate_signal(
+                symbol=symbol,
+                signal_type=''buy'',
+                quantity=position_size,
+                reason=f''Short SMA crossed above long SMA at ${current_price}''
+            )',
     '{"short_period": 10, "long_period": 20, "position_size": 10}',
     ARRAY['IN', 'US', 'GB'],
     ARRAY['zerodha', 'alpaca'],
@@ -74,34 +83,39 @@ INSERT INTO algorithm_templates (
 
 oversold_threshold = parameters.get(''oversold_threshold'', 30)
 overbought_threshold = parameters.get(''overbought_threshold'', 70)
+rsi_period = parameters.get(''rsi_period'', 14)
 position_size = parameters.get(''position_size'', 10)
 
 for symbol, data in market_data.items():
-    current_price = data.get(''price'', 0)
+    indicators = data.get(''indicators'', {})
+    rsi_value = indicators.get(f''rsi_{rsi_period}'')
 
+    if rsi_value is None:
+        continue
+
+    current_price = data.get(''price'', 0)
     if current_price == 0:
         continue
 
-    # Check if we have a position
     existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    open_positions = sum(1 for p in positions if p.get(''quantity'', 0) > 0)
 
-    # Placeholder RSI logic (in production, calculate from historical data)
-    # For demo purposes, use price-based threshold
-    if not existing_position and current_price < 80:
-        # Simulating oversold condition
+    if not existing_position and rsi_value <= oversold_threshold:
+        if open_positions >= max_positions:
+            continue
+
         generate_signal(
             symbol=symbol,
             signal_type=''buy'',
             quantity=position_size,
-            reason=f''RSI oversold buy signal at ${current_price}''
+            reason=f''RSI {rsi_value:.2f} <= {oversold_threshold}''
         )
-    elif existing_position and current_price > 150:
-        # Simulating overbought condition
+    elif existing_position and rsi_value >= overbought_threshold:
         generate_signal(
             symbol=symbol,
             signal_type=''sell'',
             quantity=existing_position[''quantity''],
-            reason=f''RSI overbought sell signal at ${current_price}''
+            reason=f''RSI {rsi_value:.2f} >= {overbought_threshold}''
         )',
     '{"oversold_threshold": 30, "overbought_threshold": 70, "position_size": 10}',
     ARRAY['IN', 'US', 'GB'],
@@ -132,33 +146,36 @@ bb_std_dev = parameters.get(''bb_std_dev'', 2)
 position_size = parameters.get(''position_size'', 10)
 
 for symbol, data in market_data.items():
-    if len(positions) >= max_positions:
-        break
+    indicators = data.get(''indicators'', {})
+    lower_band = indicators.get(f''bb_lower_{bb_period}'') or indicators.get(''bb_lower'')
+    upper_band = indicators.get(f''bb_upper_{bb_period}'') or indicators.get(''bb_upper'')
+
+    if lower_band is None or upper_band is None:
+        continue
 
     current_price = data.get(''price'', 0)
-
     if current_price == 0:
         continue
 
     existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    open_positions = sum(1 for p in positions if p.get(''quantity'', 0) > 0)
 
-    # Placeholder Bollinger Band logic
-    # In production, calculate actual bands from historical data
-    if not existing_position and current_price < 90:
-        # Simulating lower band bounce
+    if not existing_position and current_price <= lower_band:
+        if open_positions >= max_positions:
+            continue
+
         generate_signal(
             symbol=symbol,
             signal_type=''buy'',
             quantity=position_size,
-            reason=f''Lower Bollinger Band bounce at ${current_price}''
+            reason=f''Price ${current_price} touched lower band ${lower_band:.2f}''
         )
-    elif existing_position and current_price > 140:
-        # Simulating upper band touch
+    elif existing_position and current_price >= upper_band:
         generate_signal(
             symbol=symbol,
             signal_type=''sell'',
             quantity=existing_position[''quantity''],
-            reason=f''Upper Bollinger Band touch at ${current_price}''
+            reason=f''Price ${current_price} touched upper band ${upper_band:.2f}''
         )',
     '{"bb_period": 20, "bb_std_dev": 2, "position_size": 10}',
     ARRAY['IN', 'US', 'GB'],
@@ -190,33 +207,36 @@ macd_signal = parameters.get(''macd_signal'', 9)
 position_size = parameters.get(''position_size'', 10)
 
 for symbol, data in market_data.items():
-    if len(positions) >= max_positions:
-        break
+    indicators = data.get(''indicators'', {})
+    macd_value = indicators.get(''macd'')
+    macd_signal_value = indicators.get(''macd_signal'')
+
+    if macd_value is None or macd_signal_value is None:
+        continue
 
     current_price = data.get(''price'', 0)
-
     if current_price == 0:
         continue
 
     existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    open_positions = sum(1 for p in positions if p.get(''quantity'', 0) > 0)
 
-    # Placeholder MACD logic
-    # In production, calculate actual MACD from historical data
-    if not existing_position and current_price > 95 and current_price < 110:
-        # Simulating bullish MACD crossover
+    if not existing_position and macd_value > macd_signal_value:
+        if open_positions >= max_positions:
+            continue
+
         generate_signal(
             symbol=symbol,
             signal_type=''buy'',
             quantity=position_size,
-            reason=f''MACD bullish crossover at ${current_price}''
+            reason=f''MACD ({macd_value:.2f}) crossed above signal ({macd_signal_value:.2f})''
         )
-    elif existing_position and current_price > 135:
-        # Simulating bearish MACD crossover
+    elif existing_position and macd_value < macd_signal_value:
         generate_signal(
             symbol=symbol,
             signal_type=''sell'',
             quantity=existing_position[''quantity''],
-            reason=f''MACD bearish crossover at ${current_price}''
+            reason=f''MACD ({macd_value:.2f}) crossed below signal ({macd_signal_value:.2f})''
         )',
     '{"macd_fast": 12, "macd_slow": 26, "macd_signal": 9, "position_size": 10}',
     ARRAY['IN', 'US', 'GB'],
@@ -247,33 +267,40 @@ breakout_pct = parameters.get(''breakout_pct'', 2.0)
 position_size = parameters.get(''position_size'', 10)
 
 for symbol, data in market_data.items():
-    if len(positions) >= max_positions:
-        break
-
+    indicators = data.get(''indicators'', {})
     current_price = data.get(''price'', 0)
+    avg_volume = indicators.get(''avg_volume'')
+    current_volume = indicators.get(''volume_sma_20'', avg_volume)
+    recent_high = indicators.get(''sma_200'')
+    recent_low = indicators.get(''sma_50'')
 
-    if current_price == 0:
+    if current_price == 0 or avg_volume is None:
         continue
 
-    existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    volume_ratio = current_volume / avg_volume if avg_volume else 0
 
-    # Placeholder volume breakout logic
-    # In production, calculate from actual volume data
-    if not existing_position and current_price > 105:
-        # Simulating volume breakout
+    existing_position = next((p for p in positions if p[''symbol''] == symbol), None)
+    open_positions = sum(1 for p in positions if p.get(''quantity'', 0) > 0)
+
+    breakout_price = recent_high * (1 + breakout_pct / 100) if recent_high else current_price
+    breakdown_price = recent_low * (1 - breakout_pct / 100) if recent_low else current_price
+
+    if not existing_position and volume_ratio >= volume_threshold and current_price >= breakout_price:
+        if open_positions >= max_positions:
+            continue
+
         generate_signal(
             symbol=symbol,
             signal_type=''buy'',
             quantity=position_size,
-            reason=f''Volume breakout detected at ${current_price}''
+            reason=f''Volume ratio {volume_ratio:.2f} >= {volume_threshold} with breakout price ${current_price}''
         )
-    elif existing_position and current_price < 85:
-        # Simulating volume breakdown
+    elif existing_position and volume_ratio >= volume_threshold and current_price <= breakdown_price:
         generate_signal(
             symbol=symbol,
             signal_type=''sell'',
             quantity=existing_position[''quantity''],
-            reason=f''Volume breakdown at ${current_price}''
+            reason=f''Volume ratio {volume_ratio:.2f} >= {volume_threshold} with breakdown price ${current_price}''
         )',
     '{"volume_threshold": 1.5, "breakout_pct": 2.0, "position_size": 10}',
     ARRAY['IN', 'US', 'GB'],

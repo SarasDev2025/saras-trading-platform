@@ -222,7 +222,7 @@ export default function SmallcasesPage() {
       refetchBuyingPower(); // Force refresh cash balance
 
       // Invalidate all portfolio-related queries to update dashboard
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["portfolios", "cash-balance"] });
 
       // Switch to investments tab to show the new investment

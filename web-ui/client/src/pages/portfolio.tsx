@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Position } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, List, Target, BarChart3 } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface Portfolio {
   id: string;
@@ -22,16 +23,13 @@ export default function Portfolio() {
 
   // Fetch user's portfolios
   const { data: portfolios, isLoading: isLoadingPortfolios } = useQuery<Portfolio[]>({
-    queryKey: ["/portfolios"],
+    queryKey: ["/api/portfolios"],
     queryFn: async () => {
-      const response = await fetch("/portfolios");
-      const apiResponse = await response.json();
-
-      if (!apiResponse.success || !Array.isArray(apiResponse.data)) {
-        throw new Error("Failed to fetch portfolios");
+      const response = await api.get("/portfolios");
+      if (!response.data?.success || !Array.isArray(response.data.data)) {
+        throw new Error(response.data?.message || "Failed to fetch portfolios");
       }
-
-      return apiResponse.data;
+      return response.data.data;
     },
   });
 
@@ -40,17 +38,14 @@ export default function Portfolio() {
   const portfolioId = currentPortfolio?.id;
 
   const { data: positions, isLoading } = useQuery<Position[]>({
-    queryKey: ["/portfolios", portfolioId, "positions"],
+    queryKey: ["/api/portfolios", portfolioId, "positions"],
     enabled: !!portfolioId,
     queryFn: async () => {
-      const response = await fetch(`/portfolios/${portfolioId}/positions`);
-      const apiResponse = await response.json();
-
-      if (!apiResponse.success || !Array.isArray(apiResponse.data)) {
-        throw new Error("Failed to fetch positions");
+      const response = await api.get(`/portfolios/${portfolioId}/positions`);
+      if (!response.data?.success || !Array.isArray(response.data.data)) {
+        throw new Error(response.data?.message || "Failed to fetch positions");
       }
-
-      return apiResponse.data;
+      return response.data.data;
     },
   });
 
@@ -60,17 +55,14 @@ export default function Portfolio() {
     algorithms: Position[];
     manual: Position[];
   }>({
-    queryKey: ["/portfolios", portfolioId, "positions", "grouped"],
+    queryKey: ["/api/portfolios", portfolioId, "positions", "grouped"],
     enabled: !!portfolioId,
     queryFn: async () => {
-      const response = await fetch(`/portfolios/${portfolioId}/positions/grouped`);
-      const apiResponse = await response.json();
-
-      if (!apiResponse.success || !apiResponse.data) {
-        throw new Error("Failed to fetch grouped positions");
+      const response = await api.get(`/portfolios/${portfolioId}/positions/grouped`);
+      if (!response.data?.success || !response.data.data) {
+        throw new Error(response.data?.message || "Failed to fetch grouped positions");
       }
-
-      return apiResponse.data;
+      return response.data.data;
     },
   });
 

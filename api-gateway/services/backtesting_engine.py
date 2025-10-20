@@ -14,19 +14,22 @@ Features:
 - Parameter optimization grid search
 """
 import asyncio
+import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
 from enum import Enum
-import uuid
-import pandas as pd
+from typing import Dict, List, Optional, Any, Tuple
+
 import numpy as np
+import pandas as pd
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.algorithm_engine import AlgorithmEngine
+from services.algorithm_sandbox import AlgorithmSandbox, AlgorithmSandboxError
 from services.redis_cache_service import RedisCacheService
 
 logger = logging.getLogger(__name__)
@@ -202,9 +205,15 @@ class BacktestingEngine:
                 # Get current bar data for all symbols
                 current_bars = {}
                 for symbol, df in historical_data.items():
-                    bar_data = df[df['timestamp'] == timestamp]
-                    if not bar_data.empty:
-                        current_bars[symbol] = bar_data.iloc[0].to_dict()
+                    matching = df.index[df['timestamp'] == timestamp]
+                    if len(matching) == 0:
+                        continue
+
+                    idx = matching[0]
+                    bar_series = df.loc[idx]
+                    bar_dict = bar_series.to_dict()
+                    bar_dict['indicators'] = self._calculate_indicators_for_bar(df, idx)
+                    current_bars[symbol] = bar_dict
 
                 if not current_bars:
                     continue
@@ -380,6 +389,11 @@ class BacktestingEngine:
         """Extract symbols from algorithm configuration"""
         try:
             stock_universe = algorithm.get('stock_universe', {})
+            if isinstance(stock_universe, str):
+                try:
+                    stock_universe = json.loads(stock_universe)
+                except json.JSONDecodeError:
+                    stock_universe = {}
 
             if stock_universe.get('type') == 'specific':
                 symbols = stock_universe.get('symbols', [])
@@ -419,27 +433,96 @@ class BacktestingEngine:
             # This is a simplified version - in production, we'd use algorithm_engine
             # For now, we'll execute the algorithm code in a sandboxed environment
 
-            algorithm_code = algorithm.get('algorithm_code', '')
+            algorithm_code = algorithm.get('strategy_code') or algorithm.get('algorithm_code')
 
             if not algorithm_code:
                 return None
 
             # Prepare context for algorithm execution
+            sanitized_positions = []
+            for symbol, position in portfolio_state['positions'].items():
+                shares = position.get('shares', 0)
+                avg_price = position.get('avg_price') or position.get('average_cost') or 0
+                try:
+                    sanitized_positions.append({
+                        'symbol': symbol,
+                        'quantity': float(shares),
+                        'avg_cost': float(avg_price),
+                    })
+                except (TypeError, ValueError):
+                    continue
+
+            market_data = {}
+            for symbol, bar in current_bars.items():
+                indicators = bar.get('indicators', {})
+                market_data[symbol] = {
+                    'price': float(bar['close']),
+                    'open': float(bar['open']),
+                    'high': float(bar['high']),
+                    'low': float(bar['low']),
+                    'volume': float(bar.get('volume', 0)),
+                    'indicators': indicators,
+                }
+
+            parameters = algorithm.get('parameters') or {}
+            if isinstance(parameters, str):
+                try:
+                    parameters = json.loads(parameters)
+                except json.JSONDecodeError:
+                    parameters = {}
+
+            max_positions = algorithm.get('max_positions') or 10
+            try:
+                max_positions = int(max_positions)
+            except (TypeError, ValueError):
+                max_positions = 10
+
+            risk_per_trade = algorithm.get('risk_per_trade') or 0.01
+            try:
+                risk_per_trade = float(risk_per_trade)
+            except (TypeError, ValueError):
+                risk_per_trade = 0.01
+
             context = {
-                'current_bars': current_bars,
-                'portfolio': portfolio_state,
-                'timestamp': timestamp,
-                'signals': []
+                'parameters': parameters.copy() if isinstance(parameters, dict) else {},
+                'positions': sanitized_positions,
+                'market_data': market_data,
+                'max_positions': max_positions,
+                'risk_per_trade': risk_per_trade,
+                'signals': [],
             }
 
-            # Execute algorithm code (simplified - production would use full sandbox)
-            # For safety, we'll skip actual execution in backtest for now
-            # and return empty signals
+            def record_signal(symbol: str, signal_type: str, quantity: float, reason: str = "") -> None:
+                if not symbol or not signal_type:
+                    return
+                try:
+                    qty = float(quantity)
+                except (TypeError, ValueError):
+                    return
+                if qty <= 0:
+                    return
+                context['signals'].append({
+                    'symbol': symbol,
+                    'signal_type': signal_type.lower(),
+                    'quantity': qty,
+                    'reason': reason,
+                })
 
-            # TODO: Implement safe algorithm execution with:
-            # - RestrictedPython for sandboxing
-            # - Context injection (current_bars, portfolio, etc.)
-            # - Signal extraction from algorithm output
+            try:
+                await AlgorithmSandbox.execute(
+                    code=algorithm_code,
+                    extra_globals={
+                        'generate_signal': record_signal,
+                        'pd': pd,
+                        'np': np,
+                        'datetime': datetime,
+                        'print': logger.info,
+                    },
+                    local_context=context,
+                )
+            except AlgorithmSandboxError as exc:
+                logger.error("Algorithm code execution failed: %s", exc)
+                raise RuntimeError(f"Algorithm execution error: {str(exc)}") from exc
 
             return context.get('signals', [])
 
@@ -481,10 +564,19 @@ class BacktestingEngine:
         trades = []
 
         for signal in signals:
-            symbol = signal['symbol']
-            action = signal['action']  # 'buy' or 'sell'
+            symbol = signal.get('symbol')
+            if not symbol:
+                continue
+            action = signal.get('signal_type') or signal.get('action')
 
             if symbol not in current_bars:
+                continue
+
+            if not action:
+                continue
+
+            action = action.lower()
+            if action not in {'buy', 'sell'}:
                 continue
 
             current_price = current_bars[symbol]['close']
@@ -691,6 +783,62 @@ class BacktestingEngine:
 
         return cash + position_value
 
+    def _calculate_indicators_for_bar(self, df: pd.DataFrame, idx: int) -> Dict[str, float]:
+        """Calculate technical indicators up to the specified bar index."""
+        history = df.iloc[: idx + 1]
+        indicators: Dict[str, float] = {}
+
+        close = history['close']
+        volume = history['volume'] if 'volume' in history else pd.Series(dtype=float)
+
+        sma_periods = [10, 20, 50, 200]
+        for period in sma_periods:
+            if len(history) >= period:
+                indicators[f'sma_{period}'] = float(close.tail(period).mean())
+
+        rsi_period = 14
+        if len(history) >= rsi_period + 1:
+            delta = close.diff().dropna()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            avg_gain = gain.rolling(rsi_period).mean().iloc[-1]
+            avg_loss = loss.rolling(rsi_period).mean().iloc[-1]
+            if avg_loss == 0:
+                rsi = 100.0
+            else:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            indicators[f'rsi_{rsi_period}'] = float(rsi)
+
+        bb_period = 20
+        if len(history) >= bb_period:
+            recent = close.tail(bb_period)
+            middle = recent.mean()
+            std = recent.std(ddof=0)
+            indicators[f'bb_middle_{bb_period}'] = float(middle)
+            indicators[f'bb_upper_{bb_period}'] = float(middle + (std * 2))
+            indicators[f'bb_lower_{bb_period}'] = float(middle - (std * 2))
+
+        ema_fast_span = 12
+        ema_slow_span = 26
+        ema_signal_span = 9
+        if len(history) >= ema_slow_span:
+            ema_fast = close.ewm(span=ema_fast_span, adjust=False).mean()
+            ema_slow = close.ewm(span=ema_slow_span, adjust=False).mean()
+            macd_series = ema_fast - ema_slow
+            macd_value = macd_series.iloc[-1]
+            macd_signal = macd_series.ewm(span=ema_signal_span, adjust=False).mean().iloc[-1]
+            indicators['macd'] = float(macd_value)
+            indicators['macd_signal'] = float(macd_signal)
+            indicators['macd_histogram'] = float(macd_value - macd_signal)
+
+        if not volume.empty:
+            avg_volume = volume.tail(20).mean()
+            indicators['avg_volume'] = float(avg_volume) if not pd.isna(avg_volume) else None
+            indicators['volume_sma_20'] = indicators['avg_volume']
+
+        return {k: v for k, v in indicators.items() if v is not None}
+
     def _calculate_performance_metrics(
         self,
         portfolio_state: Dict,
@@ -784,19 +932,36 @@ class BacktestingEngine:
         try:
             async with self.db_session_factory() as db:
                 result = await db.execute(text("""
-                    SELECT id, name, algorithm_code, stock_universe, parameters
+                    SELECT id, name, strategy_code, stock_universe, parameters, max_positions, risk_per_trade
                     FROM trading_algorithms
                     WHERE id = :algorithm_id
                 """), {'algorithm_id': algorithm_id})
 
                 row = result.fetchone()
                 if row:
+                    stock_universe = row.stock_universe
+                    parameters = row.parameters
+
+                    if isinstance(stock_universe, str):
+                        try:
+                            stock_universe = json.loads(stock_universe)
+                        except json.JSONDecodeError:
+                            stock_universe = {}
+
+                    if isinstance(parameters, str):
+                        try:
+                            parameters = json.loads(parameters)
+                        except json.JSONDecodeError:
+                            parameters = {}
+
                     return {
                         'id': str(row.id),
                         'name': row.name,
-                        'algorithm_code': row.algorithm_code,
-                        'stock_universe': row.stock_universe,
-                        'parameters': row.parameters
+                        'strategy_code': row.strategy_code,
+                        'stock_universe': stock_universe,
+                        'parameters': parameters,
+                        'max_positions': row.max_positions,
+                        'risk_per_trade': row.risk_per_trade
                     }
                 return None
 

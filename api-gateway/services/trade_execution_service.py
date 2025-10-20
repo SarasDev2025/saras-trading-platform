@@ -100,6 +100,7 @@ class TradingExecutionService:
         fees: Decimal,
         fill_status: TransactionStatus,
         fill_metadata: Optional[Dict[str, Any]] = None,
+        refresh_snapshot: bool = True,
     ) -> TradingTransaction:
         """
         Apply a confirmed broker fill to the portfolio.
@@ -140,9 +141,10 @@ class TradingExecutionService:
         # services for now. Future iterations will move that logic here so fills
         # are the single source of truth.
 
-        await PortfolioPerformanceService.refresh_snapshot(
-            transaction.portfolio_id,
-            transaction.user_id,
-        )
+        if refresh_snapshot:
+            await PortfolioPerformanceService.refresh_snapshot(
+                transaction.portfolio_id,
+                transaction.user_id,
+            )
 
         return transaction

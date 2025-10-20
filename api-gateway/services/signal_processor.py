@@ -191,13 +191,18 @@ class SignalProcessor:
             "suggested_price": execution_price,
             "reason": reason,
             "generated_at": datetime.now(timezone.utc),
-            "executed": not dry_run
+            "executed": False
         })
 
         signal_id = signal_result.scalar()
 
         # If dry run, don't execute
         if dry_run:
+            await db.execute(text("""
+                UPDATE algorithm_signals
+                SET execution_status = 'simulated'
+                WHERE id = :signal_id
+            """), {"signal_id": str(signal_id)})
             await db.commit()
             return {
                 'signal': signal,
@@ -240,7 +245,12 @@ class SignalProcessor:
                 'quantity': Decimal(str(quantity)),
                 'price_per_unit': Decimal(str(execution_price)),
                 'order_type': OrderType.MARKET,
-                'notes': f"Algorithm: {algorithm_id} | {reason}"
+                'notes': f"Algorithm: {algorithm_id} | {reason}",
+                'execution_metadata': {
+                    'source': 'algorithm_signal',
+                    'algorithm_id': str(algorithm_id),
+                    'execution_id': str(execution_id)
+                }
             }
 
             transaction = await TradingService.create_transaction(transaction_data)

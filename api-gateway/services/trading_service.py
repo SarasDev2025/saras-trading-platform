@@ -52,6 +52,20 @@ class TradingService:
                     net_amount
                 )
 
+            # Extract source information from execution_metadata
+            execution_metadata = transaction_data.get('execution_metadata', {})
+            source_type = None
+            source_id = None
+
+            if 'algorithm_id' in execution_metadata:
+                source_type = 'algorithm'
+                source_id = execution_metadata['algorithm_id']
+            elif 'smallcase_investment_id' in execution_metadata:
+                source_type = 'smallcase'
+                source_id = execution_metadata['smallcase_investment_id']
+            else:
+                source_type = 'manual'
+
             # Create transaction
             transaction = TradingTransaction(
                 user_id=transaction_data['user_id'],
@@ -71,11 +85,17 @@ class TradingService:
             session.add(transaction)
             await session.flush()  # Get the transaction ID
 
-            # Execute the transaction using existing immediate logic
-            await TradingService._execute_transaction(session, transaction)
+            # Execute the transaction using existing immediate logic with source tracking
+            await TradingService._execute_transaction(
+                session,
+                transaction,
+                source_type=source_type,
+                source_id=source_id
+            )
 
             # Normalise finalisation through the shared execution service so
             # that future broker fills can reuse the same flow.
+            metadata = transaction_data.get('execution_metadata') or {"source": "manual_trading_service"}
             await TradingExecutionService.finalize_fill(
                 session=session,
                 transaction=transaction,
@@ -83,11 +103,24 @@ class TradingService:
                 fill_price=transaction.price_per_unit,
                 fees=transaction.fees or Decimal("0"),
                 fill_status=transaction.status,
-                fill_metadata={"source": "manual_trading_service"},
+                fill_metadata=metadata,
+                refresh_snapshot=False,
             )
 
             await session.commit()
             await session.refresh(transaction)
+
+            try:
+                await PortfolioPerformanceService.refresh_snapshot(
+                    transaction.portfolio_id,
+                    transaction.user_id,
+                )
+            except Exception as snapshot_error:  # pragma: no cover - best effort logging
+                logger.warning(
+                    "Failed to refresh performance snapshot after transaction %s: %s",
+                    transaction.id,
+                    snapshot_error,
+                )
 
             return transaction
 
@@ -112,12 +145,17 @@ class TradingService:
             )
 
     @staticmethod
-    async def _execute_transaction(session: AsyncSession, transaction: TradingTransaction):
-        """Execute a trading transaction - update holdings and portfolio"""
+    async def _execute_transaction(
+        session: AsyncSession,
+        transaction: TradingTransaction,
+        source_type: Optional[str] = None,
+        source_id: Optional[str] = None
+    ):
+        """Execute a trading transaction - update holdings and portfolio with source tracking"""
         # Update transaction status
         transaction.status = TransactionStatus.EXECUTED
         transaction.settlement_date = datetime.now(timezone.utc)
-        
+
         # Get existing holding
         holding_result = await session.execute(
             select(PortfolioHolding).where(
@@ -128,11 +166,22 @@ class TradingService:
             )
         )
         existing_holding = holding_result.scalar_one_or_none()
-        
+
         if existing_holding:
-            await TradingService._update_existing_holding(session, existing_holding, transaction)
+            await TradingService._update_existing_holding(
+                session,
+                existing_holding,
+                transaction,
+                source_type=source_type,
+                source_id=source_id
+            )
         elif transaction.transaction_type == TransactionType.BUY:
-            await TradingService._create_new_holding(session, transaction)
+            await TradingService._create_new_holding(
+                session,
+                transaction,
+                source_type=source_type,
+                source_id=source_id
+            )
         else:
             raise ValueError("Cannot sell asset that is not owned")
         
@@ -143,49 +192,67 @@ class TradingService:
         await TradingService._update_portfolio_values(session, transaction.portfolio_id)
 
     @staticmethod
-    async def _update_existing_holding(session: AsyncSession, holding: PortfolioHolding, transaction: TradingTransaction):
-        """Update existing portfolio holding"""
+    async def _update_existing_holding(
+        session: AsyncSession,
+        holding: PortfolioHolding,
+        transaction: TradingTransaction,
+        source_type: Optional[str] = None,
+        source_id: Optional[str] = None
+    ):
+        """Update existing portfolio holding with optional source tracking"""
         if transaction.transaction_type == TransactionType.BUY:
             # Add to position
             new_quantity = holding.quantity + transaction.quantity
             new_total_cost = holding.total_cost + (transaction.quantity * transaction.price_per_unit)
             new_average_cost = new_total_cost / new_quantity if new_quantity > 0 else Decimal('0')
-            
+
             holding.quantity = new_quantity
             holding.total_cost = new_total_cost
             holding.average_cost = new_average_cost
-            
+
+            # If holding doesn't have source but this transaction does, set it
+            if not holding.source_type and source_type:
+                holding.source_type = source_type
+                holding.source_id = uuid.UUID(source_id) if source_id else None
+
         else:  # SELL
             if holding.quantity < transaction.quantity:
                 raise ValueError("Insufficient quantity to sell")
-            
+
             new_quantity = holding.quantity - transaction.quantity
             sold_cost = holding.average_cost * transaction.quantity
             new_total_cost = holding.total_cost - sold_cost
             realized_pnl = (transaction.price_per_unit - holding.average_cost) * transaction.quantity
-            
+
             holding.quantity = new_quantity
             holding.total_cost = new_total_cost if new_quantity > 0 else Decimal('0')
             holding.realized_pnl = (holding.realized_pnl or Decimal('0')) + realized_pnl
-            
+
             if new_quantity == 0:
                 holding.average_cost = Decimal('0')
-        
+
         holding.last_updated = datetime.now(timezone.utc)
 
     @staticmethod
-    async def _create_new_holding(session: AsyncSession, transaction: TradingTransaction):
-        """Create new portfolio holding"""
+    async def _create_new_holding(
+        session: AsyncSession,
+        transaction: TradingTransaction,
+        source_type: Optional[str] = None,
+        source_id: Optional[str] = None
+    ):
+        """Create new portfolio holding with source tracking"""
         total_cost = transaction.quantity * transaction.price_per_unit
-        
+
         holding = PortfolioHolding(
             portfolio_id=transaction.portfolio_id,
             asset_id=transaction.asset_id,
             quantity=transaction.quantity,
             average_cost=transaction.price_per_unit,
-            total_cost=total_cost
+            total_cost=total_cost,
+            source_type=source_type,
+            source_id=uuid.UUID(source_id) if source_id else None
         )
-        
+
         session.add(holding)
 
     @staticmethod

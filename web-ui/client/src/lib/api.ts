@@ -417,6 +417,35 @@ export const algorithmAPI = {
     const response = await api.post<APIResponse>(`/api/v1/algorithms/visual-templates/${template_id}/use`);
     return response.data;
   },
+
+  // Performance & Analytics
+  getPositions: async (algorithm_id: string) => {
+    const response = await api.get<APIResponse>(`/api/v1/algorithms/${algorithm_id}/positions`);
+    return response.data;
+  },
+
+  getTradeHistory: async (algorithm_id: string, limit: number = 100, offset: number = 0) => {
+    const response = await api.get<APIResponse>(
+      `/api/v1/algorithms/${algorithm_id}/trade-history?limit=${limit}&offset=${offset}`
+    );
+    return response.data;
+  },
+
+  getPnL: async (algorithm_id: string) => {
+    const response = await api.get<APIResponse>(`/api/v1/algorithms/${algorithm_id}/pnl`);
+    return response.data;
+  },
+
+  getEquityCurve: async (algorithm_id: string, start_date?: string, end_date?: string) => {
+    let url = `/api/v1/algorithms/${algorithm_id}/equity-curve`;
+    const params = [];
+    if (start_date) params.push(`start_date=${start_date}`);
+    if (end_date) params.push(`end_date=${end_date}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+
+    const response = await api.get<APIResponse>(url);
+    return response.data;
+  },
 };
 
 export default api;

@@ -17,6 +17,7 @@ import Dashboard from "./pages/dashboard";
 import Portfolio from "./pages/portfolio";
 import Trading from "./pages/trading";
 import Algorithms from "./pages/algorithms";
+import AlgorithmDetail from "./pages/algorithms/[id]";
 import Analytics from "./pages/analytics";
 import Settings from "./pages/settings";
 import Smallcases from "./pages/smallcases";
@@ -65,6 +66,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
       
+      <Route path="/algorithms/:id">
+        <ProtectedRoute>
+          <AlgorithmDetail />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/algorithms">
         <ProtectedRoute>
           <Algorithms />

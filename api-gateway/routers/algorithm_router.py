@@ -246,17 +246,36 @@ async def list_algorithms(
 
         result = await db.execute(text(f"""
             SELECT
-                id, name, description, status, auto_run,
-                execution_interval, last_run_at, total_executions,
-                successful_executions, created_at, updated_at
-            FROM trading_algorithms
-            {where_clause}
-            ORDER BY updated_at DESC
+                ta.id, ta.name, ta.description, ta.status, ta.auto_run,
+                ta.execution_interval, ta.last_run_at, ta.total_executions,
+                ta.successful_executions, ta.created_at, ta.updated_at,
+                COALESCE(pnl.total_unrealized_pnl, 0) as total_unrealized_pnl,
+                COALESCE(pnl.total_realized_pnl, 0) as total_realized_pnl,
+                COALESCE(pnl.positions_count, 0) as positions_count,
+                COALESCE(pnl.total_market_value, 0) as total_market_value
+            FROM trading_algorithms ta
+            LEFT JOIN (
+                SELECT
+                    source_id as algorithm_id,
+                    SUM(unrealized_pnl) as total_unrealized_pnl,
+                    SUM(realized_pnl) as total_realized_pnl,
+                    COUNT(*) as positions_count,
+                    SUM(current_value) as total_market_value
+                FROM portfolio_holdings
+                WHERE source_type = 'algorithm' AND quantity > 0
+                GROUP BY source_id
+            ) pnl ON pnl.algorithm_id = ta.id
+            {where_clause.replace('WHERE user_id', 'WHERE ta.user_id')}
+            ORDER BY ta.updated_at DESC
             LIMIT :limit
         """), params)
 
         algorithms = []
         for row in result.fetchall():
+            total_unrealized = float(row.total_unrealized_pnl) if row.total_unrealized_pnl else 0
+            total_realized = float(row.total_realized_pnl) if row.total_realized_pnl else 0
+            total_pnl = total_unrealized + total_realized
+
             algorithms.append({
                 "id": str(row.id),
                 "name": row.name,
@@ -267,6 +286,11 @@ async def list_algorithms(
                 "last_run_at": row.last_run_at.isoformat() if row.last_run_at else None,
                 "total_executions": row.total_executions,
                 "successful_executions": row.successful_executions,
+                "total_pnl": total_pnl,
+                "unrealized_pnl": total_unrealized,
+                "realized_pnl": total_realized,
+                "positions_count": row.positions_count or 0,
+                "market_value": float(row.total_market_value) if row.total_market_value else 0,
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat()
             })
@@ -1514,6 +1538,25 @@ async def get_equity_curve(
         if not result.fetchone():
             raise HTTPException(status_code=404, detail="Algorithm not found")
 
+        # Quick existence check for snapshots
+        snapshot_exists = await db.execute(
+            text("""
+                SELECT 1 FROM algorithm_performance_snapshots
+                WHERE algorithm_id = :algorithm_id
+                LIMIT 1
+            """),
+            {"algorithm_id": algorithm_id}
+        )
+
+        if not snapshot_exists.fetchone():
+            return APIResponse(
+                success=True,
+                data={
+                    "equity_curve": [],
+                    "data_points": 0
+                }
+            )
+
         # Build query
         query = """
             SELECT
@@ -1574,7 +1617,7 @@ async def get_trade_history(
     """
     Get trade history for an algorithm
 
-    Returns list of executed trades with P&L information
+    Returns list of executed trades from trading_transactions
     """
     try:
         user_id = current_user["id"]
@@ -1588,25 +1631,30 @@ async def get_trade_history(
         if not result.fetchone():
             raise HTTPException(status_code=404, detail="Algorithm not found")
 
-        # Get trades
+        # Get trades from trading_transactions where notes contain algorithm ID
         result = await db.execute(text("""
             SELECT
-                id,
-                symbol,
-                action,
-                quantity,
-                executed_price,
-                total_amount,
-                pnl,
-                executed_at,
-                status
-            FROM trades
-            WHERE algorithm_id = :algorithm_id
-            AND status = 'executed'
-            ORDER BY executed_at DESC
+                tt.id,
+                a.symbol,
+                tt.transaction_type,
+                tt.quantity,
+                tt.price_per_unit,
+                tt.total_amount,
+                tt.fees,
+                tt.net_amount,
+                tt.transaction_date,
+                tt.status,
+                tt.notes
+            FROM trading_transactions tt
+            JOIN assets a ON tt.asset_id = a.id
+            WHERE tt.user_id = :user_id
+            AND tt.notes LIKE :algorithm_pattern
+            AND tt.status IN ('completed', 'executed')
+            ORDER BY tt.transaction_date DESC
             LIMIT :limit OFFSET :offset
         """), {
-            "algorithm_id": algorithm_id,
+            "user_id": user_id,
+            "algorithm_pattern": f"Algorithm: {algorithm_id}%",
             "limit": limit,
             "offset": offset
         })
@@ -1616,22 +1664,28 @@ async def get_trade_history(
             trades.append({
                 "id": str(row.id),
                 "symbol": row.symbol,
-                "action": row.action,
+                "action": row.transaction_type.lower(),  # 'buy' or 'sell'
                 "quantity": float(row.quantity),
-                "executed_price": float(row.executed_price) if row.executed_price else 0,
-                "total_amount": float(row.total_amount) if row.total_amount else 0,
-                "pnl": float(row.pnl) if row.pnl else 0,
-                "executed_at": row.executed_at.isoformat(),
-                "status": row.status
+                "price": float(row.price_per_unit),
+                "total_amount": float(row.total_amount),
+                "fees": float(row.fees) if row.fees else 0,
+                "net_amount": float(row.net_amount),
+                "executed_at": row.transaction_date.isoformat(),
+                "status": row.status,
+                "notes": row.notes
             })
 
         # Get total count
         count_result = await db.execute(text("""
             SELECT COUNT(*) as total
-            FROM trades
-            WHERE algorithm_id = :algorithm_id
-            AND status = 'executed'
-        """), {"algorithm_id": algorithm_id})
+            FROM trading_transactions
+            WHERE user_id = :user_id
+            AND notes LIKE :algorithm_pattern
+            AND status IN ('completed', 'executed')
+        """), {
+            "user_id": user_id,
+            "algorithm_pattern": f"Algorithm: {algorithm_id}%"
+        })
 
         total = count_result.fetchone().total
 
@@ -1651,4 +1705,192 @@ async def get_trade_history(
         logger.error(f"Failed to get trade history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/{algorithm_id}/positions", response_model=APIResponse)
+async def get_algorithm_positions(
+    algorithm_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get current positions owned by this algorithm
+
+    Returns positions where source_type='algorithm' and source_id=algorithm_id
+    """
+    try:
+        user_id = current_user["id"]
+
+        # Verify ownership
+        algo_check = await db.execute(text("""
+            SELECT id FROM trading_algorithms
+            WHERE id = :algorithm_id AND user_id = :user_id
+        """), {"algorithm_id": algorithm_id, "user_id": user_id})
+
+        if not algo_check.fetchone():
+            raise HTTPException(status_code=404, detail="Algorithm not found")
+
+        # Get positions for this algorithm
+        result = await db.execute(text("""
+            SELECT
+                a.symbol,
+                a.name as asset_name,
+                a.asset_type,
+                ph.quantity,
+                ph.average_cost,
+                a.current_price,
+                ph.current_value as market_value,
+                ph.unrealized_pnl,
+                ph.realized_pnl,
+                ph.last_updated
+            FROM portfolio_holdings ph
+            JOIN assets a ON ph.asset_id = a.id
+            WHERE ph.source_type = 'algorithm'
+            AND ph.source_id = :algorithm_id
+            AND ph.quantity > 0
+            ORDER BY ph.current_value DESC
+        """), {"algorithm_id": algorithm_id})
+
+        positions = []
+        total_value = 0
+        total_unrealized_pnl = 0
+        total_realized_pnl = 0
+
+        for row in result.fetchall():
+            unrealized_pnl = float(row.unrealized_pnl) if row.unrealized_pnl else 0
+            realized_pnl = float(row.realized_pnl) if row.realized_pnl else 0
+            market_value = float(row.market_value) if row.market_value else 0
+            avg_cost = float(row.average_cost) if row.average_cost else 0
+
+            # Calculate unrealized P&L percentage
+            unrealized_pnl_pct = 0
+            if avg_cost > 0:
+                unrealized_pnl_pct = (unrealized_pnl / (float(row.quantity) * avg_cost)) * 100
+
+            positions.append({
+                "symbol": row.symbol,
+                "asset_name": row.asset_name,
+                "asset_type": row.asset_type,
+                "quantity": float(row.quantity),
+                "avg_cost": avg_cost,
+                "current_price": float(row.current_price) if row.current_price else 0,
+                "market_value": market_value,
+                "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": unrealized_pnl_pct,
+                "realized_pnl": realized_pnl,
+                "last_updated": row.last_updated.isoformat() if row.last_updated else None
+            })
+
+            total_value += market_value
+            total_unrealized_pnl += unrealized_pnl
+            total_realized_pnl += realized_pnl
+
+        return APIResponse(
+            success=True,
+            data={
+                "positions": positions,
+                "summary": {
+                    "total_positions": len(positions),
+                    "total_market_value": total_value,
+                    "total_unrealized_pnl": total_unrealized_pnl,
+                    "total_realized_pnl": total_realized_pnl,
+                    "total_pnl": total_unrealized_pnl + total_realized_pnl
+                }
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get algorithm positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{algorithm_id}/pnl", response_model=APIResponse)
+async def get_algorithm_pnl(
+    algorithm_id: str,
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get P&L summary for an algorithm
+
+    Returns realized P&L, unrealized P&L, and total P&L from all algorithm positions
+    """
+    try:
+        user_id = current_user["id"]
+
+        # Verify ownership
+        algo_check = await db.execute(text("""
+            SELECT id, name FROM trading_algorithms
+            WHERE id = :algorithm_id AND user_id = :user_id
+        """), {"algorithm_id": algorithm_id, "user_id": user_id})
+
+        algo = algo_check.fetchone()
+        if not algo:
+            raise HTTPException(status_code=404, detail="Algorithm not found")
+
+        # Get P&L from positions
+        positions_result = await db.execute(text("""
+            SELECT
+                COALESCE(SUM(ph.unrealized_pnl), 0) as total_unrealized_pnl,
+                COALESCE(SUM(ph.realized_pnl), 0) as total_realized_pnl,
+                COALESCE(SUM(ph.current_value), 0) as total_market_value,
+                COUNT(*) as position_count
+            FROM portfolio_holdings ph
+            WHERE ph.source_type = 'algorithm'
+            AND ph.source_id = :algorithm_id
+            AND ph.quantity > 0
+        """), {"algorithm_id": algorithm_id})
+
+        pnl_data = positions_result.fetchone()
+
+        # Get performance snapshots for historical data
+        snapshots_result = await db.execute(text("""
+            SELECT
+                snapshot_date,
+                daily_pnl,
+                cumulative_pnl,
+                daily_trades,
+                total_trades,
+                win_rate
+            FROM algorithm_performance_snapshots
+            WHERE algorithm_id = :algorithm_id
+            ORDER BY snapshot_date DESC
+            LIMIT 30
+        """), {"algorithm_id": algorithm_id})
+
+        snapshots = []
+        for row in snapshots_result.fetchall():
+            snapshots.append({
+                "date": row.snapshot_date.isoformat(),
+                "daily_pnl": float(row.daily_pnl) if row.daily_pnl else 0,
+                "cumulative_pnl": float(row.cumulative_pnl) if row.cumulative_pnl else 0,
+                "daily_trades": row.daily_trades or 0,
+                "total_trades": row.total_trades or 0,
+                "win_rate": float(row.win_rate) if row.win_rate else 0
+            })
+
+        total_unrealized = float(pnl_data.total_unrealized_pnl)
+        total_realized = float(pnl_data.total_realized_pnl)
+        total_pnl = total_unrealized + total_realized
+
+        return APIResponse(
+            success=True,
+            data={
+                "algorithm_id": algorithm_id,
+                "algorithm_name": algo.name,
+                "unrealized_pnl": total_unrealized,
+                "realized_pnl": total_realized,
+                "total_pnl": total_pnl,
+                "current_positions_count": pnl_data.position_count,
+                "total_market_value": float(pnl_data.total_market_value),
+                "performance_history": snapshots
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get algorithm P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 

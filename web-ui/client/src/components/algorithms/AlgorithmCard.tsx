@@ -1,3 +1,4 @@
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +16,6 @@ import {
   Trash2,
   MoreVertical,
   TrendingUp,
-  TrendingDown,
   Activity,
   Clock,
   BarChart3,
@@ -23,6 +23,7 @@ import {
   Calendar,
   AlertTriangle,
   Timer,
+  ExternalLink,
 } from 'lucide-react';
 
 interface AlgorithmCardProps {
@@ -42,6 +43,12 @@ export function AlgorithmCard({
   onDelete,
   onBacktest,
 }: AlgorithmCardProps) {
+  const [, navigate] = useLocation();
+
+  const handleViewDetails = () => {
+    navigate(`/algorithms/${algorithm.id}`);
+  };
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -108,11 +115,14 @@ export function AlgorithmCard({
   };
 
   const totalPnL = algorithm.total_pnl || 0;
-  const todayPnL = algorithm.today_pnl || 0;
-  const winRate = algorithm.win_rate || 0;
+  const positionsCount = algorithm.positions_count || 0;
+  const marketValue = algorithm.market_value || 0;
+  const successRate = algorithm.total_executions > 0
+    ? ((algorithm.successful_executions / algorithm.total_executions) * 100)
+    : 0;
 
   return (
-    <Card className="hover:shadow-lg transition-shadow">
+    <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={handleViewDetails}>
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="space-y-1 flex-1">
@@ -130,22 +140,40 @@ export function AlgorithmCard({
             </Badge>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" onClick={(e) => e.stopPropagation()}>
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onEdit(algorithm.id)}>
+                <DropdownMenuItem onClick={handleViewDetails}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  View Details
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(algorithm.id);
+                  }}
+                >
                   <Edit className="mr-2 h-4 w-4" />
                   Edit
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onBacktest(algorithm.id)}>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onBacktest(algorithm.id);
+                  }}
+                >
                   <BarChart3 className="mr-2 h-4 w-4" />
                   Backtest
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => onToggle(algorithm.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggle(algorithm.id);
+                  }}
                   className={algorithm.status === 'active' ? 'text-orange-600' : 'text-green-600'}
                 >
                   {algorithm.status === 'active' ? (
@@ -162,7 +190,10 @@ export function AlgorithmCard({
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => onDelete(algorithm.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(algorithm.id);
+                  }}
                   className="text-red-600"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
@@ -179,7 +210,7 @@ export function AlgorithmCard({
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Activity className="h-3 w-3" />
+                <TrendingUp className="h-3 w-3" />
                 Total P&L
               </div>
               <p className={`text-lg font-bold ${totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -189,20 +220,20 @@ export function AlgorithmCard({
 
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <TrendingUp className="h-3 w-3" />
-                Today
+                <Activity className="h-3 w-3" />
+                Positions
               </div>
-              <p className={`text-lg font-bold ${todayPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(todayPnL)}
+              <p className="text-lg font-bold">
+                {positionsCount}
               </p>
             </div>
 
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <BarChart3 className="h-3 w-3" />
-                Win Rate
+                Value
               </div>
-              <p className="text-lg font-bold">{formatPercent(winRate)}</p>
+              <p className="text-lg font-bold">{formatCurrency(marketValue)}</p>
             </div>
           </div>
 
@@ -221,7 +252,10 @@ export function AlgorithmCard({
 
             <Button
               size="sm"
-              onClick={() => onExecute(algorithm.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onExecute(algorithm.id);
+              }}
               disabled={algorithm.status !== 'active'}
             >
               <Play className="mr-1 h-3 w-3" />

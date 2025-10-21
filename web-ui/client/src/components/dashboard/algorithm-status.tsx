@@ -26,6 +26,11 @@ interface ApiAlgorithm {
   last_run_at: string | null;
   total_executions: number;
   successful_executions: number;
+  total_pnl: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  positions_count: number;
+  market_value: number;
 }
 
 interface ApiResponse<T> {
@@ -240,7 +245,7 @@ export function AlgorithmStatus() {
                           )}
                         </div>
                         <p className="text-sm text-gray-400 mb-2">{algorithm.description}</p>
-                        <div className="flex items-center space-x-4 text-xs text-gray-500">
+                        <div className="flex items-center space-x-4 text-xs text-gray-500 mb-2">
                           <span>Interval: {algorithm.execution_interval}</span>
                           <span>•</span>
                           <span>Last Run: {formatDate(algorithm.last_run_at)}</span>
@@ -253,6 +258,15 @@ export function AlgorithmStatus() {
                               </span>
                             )}
                           </span>
+                        </div>
+                        <div className="flex items-center space-x-4 text-xs">
+                          <span className={`font-medium ${algorithm.total_pnl >= 0 ? 'text-[var(--success-green)]' : 'text-[var(--danger-red)]'}`}>
+                            {algorithm.total_pnl >= 0 ? '+' : ''}{formatCurrency(algorithm.total_pnl)} P&L
+                          </span>
+                          <span>•</span>
+                          <span className="text-gray-400">{algorithm.positions_count} positions</span>
+                          <span>•</span>
+                          <span className="text-gray-400">{formatCurrency(algorithm.market_value)} value</span>
                         </div>
                       </div>
                       <Badge

@@ -1,0 +1,36 @@
+{
+  "test": "test_add_funds_and_check_balance",
+  "start": "2025-10-21T00:35:41Z",
+  "steps": [
+    {
+      "action": "register",
+      "email": "cli_user_c148fd6a@example.com",
+      "response": {
+        "success": true,
+        "data": {
+          "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4MmI5ZDE5Zi0zMmY3LTQyOTQtODQyOS1iOWE2ZGQ1M2JjMjkiLCJleHAiOjE3NjEwMDg3NDEsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3NjEwMDY5NDF9.wmUugEQ496H_baA-BD17Nqqj1I712Y8O8mBfMKSot78",
+          "refresh_token": "auDO40sUZSLHZRwZ5uq_-ThMUY3sYp7fOoqI-PFJXt0",
+          "token_type": "bearer",
+          "expires_in": 1800,
+          "user": {
+            "id": "82b9d19f-32f7-4294-8429-b9a6dd53bc29",
+            "email": "cli_user_c148fd6a@example.com",
+            "username": "cli_user_c148fd6a",
+            "first_name": "CLI",
+            "last_name": "Tester",
+            "email_verified": false,
+            "kyc_status": "pending",
+            "account_status": "active",
+            "region": "IN",
+            "trading_mode": "paper",
+            "created_at": "2025-10-21T00:35:41.482399Z"
+          }
+        },
+        "message": null,
+        "error": null
+      },
+      "base_url": "http://localhost:8000"
+    }
+  ],
+  "end": "2025-10-21T00:35:41Z"
+}

@@ -366,13 +366,15 @@ async def invest_in_smallcase(
                 await db.execute(text("""
                     INSERT INTO portfolio_holdings
                     (id, portfolio_id, asset_id, quantity, average_cost, total_cost,
-                     current_value, unrealized_pnl, realized_pnl, created_at, last_updated)
+                     current_value, unrealized_pnl, realized_pnl, source_type, source_id, created_at, last_updated)
                     VALUES (:id, :portfolio_id, :asset_id, :quantity, :average_cost, :total_cost,
-                            :current_value, :unrealized_pnl, :realized_pnl, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            :current_value, :unrealized_pnl, :realized_pnl, 'smallcase', :source_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT (portfolio_id, asset_id) DO UPDATE SET
                         quantity = portfolio_holdings.quantity + EXCLUDED.quantity,
                         total_cost = portfolio_holdings.total_cost + EXCLUDED.total_cost,
                         current_value = portfolio_holdings.current_value + EXCLUDED.current_value,
+                        source_type = COALESCE(portfolio_holdings.source_type, 'smallcase'),
+                        source_id = COALESCE(portfolio_holdings.source_id, EXCLUDED.source_id),
                         last_updated = CURRENT_TIMESTAMP
                 """), {
                     "id": holding_id,
@@ -383,7 +385,8 @@ async def invest_in_smallcase(
                     "total_cost": constituent_value,
                     "current_value": constituent_value,
                     "unrealized_pnl": 0.0,
-                    "realized_pnl": 0.0
+                    "realized_pnl": 0.0,
+                    "source_id": investment_id
                 })
                 holdings_created += 1
                 print(f"  📈 Created holding: {constituent.symbol} - {quantity:.4f} shares @ ${current_price:.2f} = ${constituent_value:.2f}")

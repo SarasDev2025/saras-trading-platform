@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Optional, Protocol
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import TradingTransaction, TransactionStatus, OrderType, TransactionType
@@ -137,9 +138,25 @@ class TradingExecutionService:
 
         await session.flush()
 
-        # IMPORTANT: portfolio cash/holdings updates remain handled by existing
-        # services for now. Future iterations will move that logic here so fills
-        # are the single source of truth.
+        if (
+            transaction.status == TransactionStatus.EXECUTED
+            and transaction.portfolio_id
+            and transaction.asset_id
+        ):
+            await session.execute(
+                text(
+                    """
+                    UPDATE portfolio_holdings
+                    SET order_status = 'filled'
+                    WHERE portfolio_id = :portfolio_id
+                      AND asset_id = :asset_id
+                    """
+                ),
+                {
+                    "portfolio_id": str(transaction.portfolio_id),
+                    "asset_id": str(transaction.asset_id),
+                },
+            )
 
         if refresh_snapshot:
             await PortfolioPerformanceService.refresh_snapshot(

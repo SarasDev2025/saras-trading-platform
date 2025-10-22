@@ -258,6 +258,14 @@ export const portfolioAPI = {
   createSnapshot: async (portfolio_id: string) => {
     const response = await api.post<APIResponse>(`/portfolios/${portfolio_id}/performance/snapshot`);
     return response.data;
+  },
+
+  closePosition: async (portfolio_id: string, symbol: string) => {
+    const response = await api.post<APIResponse>(
+      `/portfolios/${portfolio_id}/positions/close`,
+      { symbol }
+    );
+    return response.data;
   }
 };
 

@@ -47,8 +47,16 @@ class AggregatedOrder:
         self.broker_order_status: Optional[BrokerOrderStatus] = None
         self.created_at = datetime.now(timezone.utc)
 
-    def add_user_order(self, order: SmallcaseExecutionOrder, quantity: Decimal,
-                      price: Decimal, user_id: uuid.UUID, investment_id: uuid.UUID):
+    def add_user_order(
+        self,
+        order: SmallcaseExecutionOrder,
+        quantity: Decimal,
+        price: Decimal,
+        user_id: uuid.UUID,
+        investment_id: uuid.UUID,
+        portfolio_id: uuid.UUID,
+        broker_connection_id: Optional[uuid.UUID],
+    ):
         """Add a user order to the aggregated order"""
         # Update total quantity
         prev_total = self.total_quantity
@@ -66,6 +74,8 @@ class AggregatedOrder:
             'price': price,
             'user_id': user_id,
             'investment_id': investment_id,
+            'portfolio_id': portfolio_id,
+            'broker_connection_id': broker_connection_id,
             'proportion': quantity / self.total_quantity if self.total_quantity > 0 else Decimal('0')
         })
 
@@ -201,8 +211,13 @@ class OrderAggregationService:
             # Add this user order to the aggregated order
             current_price = Decimal(str(stock_info.get("current_price", 0)))
             order_groups[key].add_user_order(
-                order, quantity, current_price,
-                execution_run.user_id, investment.id
+                order,
+                quantity,
+                current_price,
+                execution_run.user_id,
+                investment.id,
+                investment.portfolio_id,
+                investment.broker_connection_id,
             )
 
             logger.info(f"[OrderAggregation] Added {symbol} {side.value} {quantity} to aggregate")
@@ -444,6 +459,8 @@ class OrderAggregationService:
                 price = user_order_info['price']
                 user_id = user_order_info['user_id']
                 investment_id = user_order_info['investment_id']
+                portfolio_id = user_order_info['portfolio_id']
+                broker_connection_id = user_order_info.get('broker_connection_id')
 
                 # Calculate transaction amounts
                 total_amount = quantity * price
@@ -451,9 +468,9 @@ class OrderAggregationService:
                 # Create transaction record
                 transaction = TradingTransaction(
                     user_id=user_id,
-                    portfolio_id=None,  # Will be set from investment
+                    portfolio_id=portfolio_id,
                     asset_id=order.asset_id,
-                    broker_connection_id=None,  # Will be set from master connection
+                    broker_connection_id=broker_connection_id,
                     execution_run_id=order.execution_run_id,
                     transaction_type=TransactionType.BUY if aggregated_order.side == OrderSide.BUY else TransactionType.SELL,
                     quantity=quantity,

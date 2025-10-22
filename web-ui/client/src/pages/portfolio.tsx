@@ -5,11 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Position } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, List, Target, BarChart3 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, portfolioAPI } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 interface Portfolio {
   id: string;
@@ -20,6 +21,8 @@ interface Portfolio {
 
 export default function Portfolio() {
   const [activeTab, setActiveTab] = useState("all");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   // Fetch user's portfolios
   const { data: portfolios, isLoading: isLoadingPortfolios } = useQuery<Portfolio[]>({
@@ -79,6 +82,35 @@ export default function Portfolio() {
     smallcases: [],
     algorithms: [],
     manual: [],
+  };
+
+  // Close position mutation
+  const closePositionMutation = useMutation({
+    mutationFn: ({ portfolio_id, symbol }: { portfolio_id: string; symbol: string }) =>
+      portfolioAPI.closePosition(portfolio_id, symbol),
+    onSuccess: (data) => {
+      toast({
+        title: "Position Closed",
+        description: data.message || `Successfully closed position`,
+      });
+      // Invalidate queries to refresh positions
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios", portfolioId, "positions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios", portfolioId, "positions", "grouped"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to close position",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleClosePosition = (symbol: string) => {
+    if (!portfolioId) return;
+    if (confirm(`Are you sure you want to close your position in ${symbol}? This will sell all shares.`)) {
+      closePositionMutation.mutate({ portfolio_id: portfolioId, symbol });
+    }
   };
 
   // Calculate metrics
@@ -167,8 +199,25 @@ export default function Portfolio() {
                       <Button size="sm" variant="outline" className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)] text-xs">
                         Trade
                       </Button>
-                      <Button size="sm" variant="outline" className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)] text-xs">
-                        Close
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="bg-[var(--carbon-gray-80)] border-[var(--carbon-gray-70)] text-white hover:bg-[var(--carbon-gray-70)] text-xs"
+                        disabled={
+                          (position.orderStatus && position.orderStatus.toLowerCase() !== "filled") ||
+                          closePositionMutation.isPending ||
+                          (position as any).source_type === 'smallcase'
+                        }
+                        onClick={() => handleClosePosition(position.symbol)}
+                        title={
+                          (position as any).source_type === 'smallcase'
+                            ? `Part of smallcase: ${(position as any).source_name || 'smallcase'}. Close the entire smallcase instead.`
+                            : undefined
+                        }
+                      >
+                        {closePositionMutation.isPending ? "Closing..." :
+                         position.orderStatus && position.orderStatus.toLowerCase() !== "filled" ? "Pending" :
+                         (position as any).source_type === 'smallcase' ? "Smallcase" : "Close"}
                       </Button>
                     </div>
                   </td>

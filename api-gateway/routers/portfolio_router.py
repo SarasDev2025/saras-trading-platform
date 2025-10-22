@@ -457,7 +457,7 @@ async def get_portfolio_positions(portfolio_id: str, db: AsyncSession = Depends(
         portfolio_id = validate_uuid(portfolio_id)
         
         result = await db.execute(text("""
-            SELECT 
+            SELECT
                 a.symbol,
                 a.name as asset_name,
                 a.asset_type,
@@ -465,9 +465,20 @@ async def get_portfolio_positions(portfolio_id: str, db: AsyncSession = Depends(
                 a.current_price,
                 ph.current_value as market_value,
                 ph.average_cost as cost_basis,
-                ph.unrealized_pnl
+                ph.unrealized_pnl,
+                ph.order_status,
+                ph.source_type,
+                ph.source_id,
+                CASE
+                    WHEN ph.source_type = 'smallcase' THEN sc.name
+                    WHEN ph.source_type = 'algorithm' THEN alg.name
+                    ELSE NULL
+                END as source_name
             FROM portfolio_holdings ph
             JOIN assets a ON ph.asset_id = a.id
+            LEFT JOIN user_smallcase_investments usi ON ph.source_id = usi.id AND ph.source_type = 'smallcase'
+            LEFT JOIN smallcases sc ON usi.smallcase_id = sc.id
+            LEFT JOIN trading_algorithms alg ON ph.source_id = alg.id AND ph.source_type = 'algorithm'
             WHERE ph.portfolio_id = :portfolio_id
             AND ph.quantity > 0
             ORDER BY ph.current_value DESC
@@ -498,7 +509,11 @@ async def get_portfolio_positions(portfolio_id: str, db: AsyncSession = Depends(
                 "current_price": float(row.current_price) if row.current_price else 0.0,
                 "market_value": float(row.market_value) if row.market_value else 0.0,
                 "cost_basis": float(row.cost_basis) if row.cost_basis else 0.0,
-                "unrealized_pnl": float(row.unrealized_pnl) if row.unrealized_pnl else 0.0
+                "unrealized_pnl": float(row.unrealized_pnl) if row.unrealized_pnl else 0.0,
+                "orderStatus": row.order_status,
+                "source_type": row.source_type,
+                "source_id": str(row.source_id) if row.source_id else None,
+                "source_name": row.source_name
             })
         
         return APIResponse(success=True, data=positions)
@@ -708,6 +723,119 @@ async def create_performance_snapshot(
     except Exception as e:
         logger.error(f"Failed to create performance snapshot: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create performance snapshot: {str(e)}")
+
+@router.post("/{portfolio_id}/positions/close", response_model=APIResponse)
+async def close_position(
+    portfolio_id: str,
+    close_data: Dict[str, Any],
+    current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Close a portfolio position by selling all shares
+
+    **Parameters:**
+    - **portfolio_id**: Portfolio UUID
+    - **close_data**: Dict with 'symbol' to close
+
+    **Returns:**
+    Result of the sell transaction
+    """
+    try:
+        from datetime import datetime, timezone
+        from models import TradingTransaction, TransactionType, OrderType, TransactionStatus
+        from services.trading_service import TradingService
+
+        user_id = uuid.UUID(current_user["id"])
+        portfolio_uuid = uuid.UUID(portfolio_id)
+        symbol = close_data.get('symbol')
+
+        if not symbol:
+            raise HTTPException(status_code=400, detail="Symbol is required")
+
+        # Get the holding details
+        result = await db.execute(text("""
+            SELECT
+                ph.id,
+                ph.asset_id,
+                ph.quantity,
+                ph.average_cost,
+                a.symbol,
+                a.current_price,
+                ph.source_type,
+                ph.source_id
+            FROM portfolio_holdings ph
+            JOIN assets a ON ph.asset_id = a.id
+            WHERE ph.portfolio_id = :portfolio_id
+            AND a.symbol = :symbol
+            AND ph.quantity > 0
+        """), {"portfolio_id": str(portfolio_uuid), "symbol": symbol})
+
+        holding = result.fetchone()
+        if not holding:
+            raise HTTPException(status_code=404, detail=f"No holding found for {symbol}")
+
+        # Check if position is part of a smallcase
+        if holding.source_type == 'smallcase':
+            # Get smallcase name for better error message
+            smallcase_result = await db.execute(text("""
+                SELECT sc.name
+                FROM user_smallcase_investments usi
+                JOIN smallcases sc ON usi.smallcase_id = sc.id
+                WHERE usi.id = :investment_id
+            """), {"investment_id": str(holding.source_id)})
+
+            smallcase_row = smallcase_result.fetchone()
+            smallcase_name = smallcase_row.name if smallcase_row else "a smallcase"
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot close individual positions from a smallcase. This position belongs to '{smallcase_name}'. Please close or rebalance the entire smallcase instead."
+            )
+
+        # Get current price (use holding price if no current price)
+        sell_price = float(holding.current_price) if holding.current_price else float(holding.average_cost)
+        quantity = float(holding.quantity)
+
+        # Create sell transaction data
+        transaction_data = {
+            'user_id': str(user_id),
+            'portfolio_id': portfolio_uuid,
+            'asset_id': holding.asset_id,
+            'transaction_type': TransactionType.SELL,
+            'quantity': quantity,
+            'price_per_unit': sell_price,
+            'notes': f'Manual close position: {symbol}',
+            'execution_metadata': {
+                'source': 'manual_position_close',
+                'close_position': True
+            }
+        }
+
+        # Execute the sell transaction using TradingService
+        transaction = await TradingService.create_transaction(transaction_data)
+
+        logger.info(f"[ClosePosition] Closed position {symbol} for user {user_id}: {quantity} shares @ ${sell_price}")
+
+        return APIResponse(
+            success=True,
+            data={
+                "symbol": symbol,
+                "quantity": quantity,
+                "price": sell_price,
+                "total_proceeds": quantity * sell_price,
+                "transaction_id": str(transaction.id)
+            },
+            message=f"Successfully closed position in {symbol}"
+        )
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to close position: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to close position: {str(e)}")
 
 @router.get("/status", response_model=List[PortfolioItem])
 async def status():

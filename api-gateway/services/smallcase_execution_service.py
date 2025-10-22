@@ -362,6 +362,11 @@ class SmallcaseExecutionService:
                         "price_per_unit": str(stock_info.get("current_price", 0)),
                         "order_type": OrderType.MARKET,
                         "notes": f"Smallcase rebalance run {run.id}",
+                        "execution_metadata": {
+                            "smallcase_investment_id": str(investment.id),
+                            "execution_run_id": str(run.id),
+                            "source": "smallcase_rebalance"
+                        }
                     }
                 )
 

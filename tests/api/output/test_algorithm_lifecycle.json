@@ -1,0 +1,36 @@
+{
+  "test": "test_algorithm_lifecycle",
+  "start": "2025-10-21T00:35:40Z",
+  "steps": [
+    {
+      "action": "register",
+      "email": "cli_user_996b93c1@example.com",
+      "response": {
+        "success": true,
+        "data": {
+          "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwYTBkZDY4NS0wNDNmLTQzZTItYjE0Mi04NTEyOTFmNTI1MTAiLCJleHAiOjE3NjEwMDg3NDAsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3NjEwMDY5NDB9.YduL-C8NglGYP_zBrUAwiJOyr8NLQaq0pIbJbUN7l_Q",
+          "refresh_token": "Vtj1Bnr54TSNkjegY4MONxZZVjnT3r0_be4Fh67zxR8",
+          "token_type": "bearer",
+          "expires_in": 1800,
+          "user": {
+            "id": "0a0dd685-043f-43e2-b142-851291f52510",
+            "email": "cli_user_996b93c1@example.com",
+            "username": "cli_user_996b93c1",
+            "first_name": "CLI",
+            "last_name": "Tester",
+            "email_verified": false,
+            "kyc_status": "pending",
+            "account_status": "active",
+            "region": "IN",
+            "trading_mode": "paper",
+            "created_at": "2025-10-21T00:35:40.855397Z"
+          }
+        },
+        "message": null,
+        "error": null
+      },
+      "base_url": "http://localhost:8000"
+    }
+  ],
+  "end": "2025-10-21T00:35:40Z"
+}

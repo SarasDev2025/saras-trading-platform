@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Plus, TrendingUp, TrendingDown, Target, Percent, Loader2, Lightbulb } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Target, Percent, Loader2, Lightbulb, X } from 'lucide-react';
 import { RuleBlock } from '../RuleBlock';
 import { Condition } from './index';
 import { PortfolioSimulator } from './PortfolioSimulator';
@@ -50,6 +51,9 @@ interface ControlPanelProps {
   onOpenSuggestions: () => void;
   onInitialCapitalChange: (value: number) => void;
   onStartDateChange: (value: string) => void;
+  selectedSymbols: string[];
+  onAddSymbol: (symbol: string) => void;
+  onRemoveSymbol: (symbol: string) => void;
 }
 
 const AVAILABLE_BLOCKS = {
@@ -76,6 +80,8 @@ const AVAILABLE_BLOCKS = {
   ],
 };
 
+const POPULAR_SYMBOLS = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'AMZN', 'NVDA', 'META'];
+
 export function ControlPanel({
   name,
   entryConditions,
@@ -95,7 +101,19 @@ export function ControlPanel({
   onOpenSuggestions,
   onInitialCapitalChange,
   onStartDateChange,
+  selectedSymbols,
+  onAddSymbol,
+  onRemoveSymbol,
 }: ControlPanelProps) {
+  const [symbolInput, setSymbolInput] = useState('');
+
+  const handleSubmitSymbol = () => {
+    const trimmed = symbolInput.trim().toUpperCase();
+    if (!trimmed) return;
+    onAddSymbol(trimmed);
+    setSymbolInput('');
+  };
+
   return (
     <div className="space-y-4">
       {/* Strategy Name */}
@@ -112,6 +130,57 @@ export function ControlPanel({
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Tracked Symbols</Label>
+            <div className="flex gap-2">
+              <Input
+                placeholder="Add symbol (e.g., MSFT)"
+                value={symbolInput}
+                onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSubmitSymbol();
+                  }
+                }}
+              />
+              <Button type="button" onClick={handleSubmitSymbol} variant="outline">
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedSymbols.length === 0 ? (
+                <span className="text-xs text-muted-foreground">No symbols selected yet.</span>
+              ) : (
+                selectedSymbols.map((sym) => (
+                  <Badge key={sym} variant="secondary" className="flex items-center gap-1">
+                    {sym}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveSymbol(sym)}
+                      className="text-xs hover:text-destructive"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {POPULAR_SYMBOLS.map((sym) => (
+                <Button
+                  key={sym}
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onAddSymbol(sym)}
+                  className="text-xs"
+                >
+                  {sym}
+                </Button>
+              ))}
+            </div>
           </div>
           <Button onClick={onOpenSuggestions} variant="outline" className="w-full" size="sm">
             <Lightbulb className="h-4 w-4 mr-2" />

@@ -41,7 +41,7 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
 
   // Stock Universe - track symbols to monitor (auto-populate with analyzed symbol)
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
-    algorithm?.stock_universe?.symbols || ['AAPL']
+    () => algorithm?.stock_universe?.symbols?.map((s: string) => s.toUpperCase()) || ['AAPL']
   );
 
   // Conditions
@@ -75,7 +75,14 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
   );
 
   // Chart data and preview
-  const { priceData, loading: loadingData, error: dataError, fetchData } = useChartData();
+  const {
+    priceDataMap,
+    compositeData,
+    primarySymbol,
+    loading: loadingData,
+    error: dataError,
+    fetchData,
+  } = useChartData();
   const { signals, stats, portfolioSimulation, loading: simulatingSignals, runSimulation } = useSignalSimulation();
 
   const [saving, setSaving] = useState(false);
@@ -86,32 +93,66 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
   const [initialCapital, setInitialCapital] = useState(10000);
   const [startDate, setStartDate] = useState('');
 
-  // Auto-add analyzed symbol to stock universe
-  useEffect(() => {
-    if (symbol && !selectedSymbols.includes(symbol)) {
-      setSelectedSymbols([...selectedSymbols, symbol]);
-    }
-  }, [symbol]);
+  const handleAddSymbol = (sym: string) => {
+    const upper = sym.trim().toUpperCase();
+    if (!upper) return;
+    setSelectedSymbols((prev) => (prev.includes(upper) ? prev : [...prev, upper]));
+  };
 
-  // Fetch initial data
+  const handleRemoveSymbol = (sym: string) => {
+    setSelectedSymbols((prev) => {
+      const updated = prev.filter((s) => s !== sym);
+      if (updated.length === 0) {
+        setSymbol('');
+      } else if (!updated.includes(symbol)) {
+        setSymbol(updated[0]);
+      }
+      return updated;
+    });
+  };
+
+  const handleSymbolChange = (sym: string) => {
+    const upper = sym.toUpperCase();
+    if (!selectedSymbols.includes(upper)) {
+      setSelectedSymbols((prev) => [...prev, upper]);
+    }
+    setSymbol(upper);
+  };
+
   useEffect(() => {
-    fetchData(symbol, timeRange);
-  }, [symbol, timeRange]);
+    if (selectedSymbols.length > 0 && !selectedSymbols.includes(symbol)) {
+      setSymbol(selectedSymbols[0]);
+    }
+  }, [selectedSymbols, symbol]);
+
+  useEffect(() => {
+    if (primarySymbol && selectedSymbols.length > 0 && !selectedSymbols.includes(symbol)) {
+      setSymbol(primarySymbol);
+    }
+  }, [primarySymbol, selectedSymbols, symbol]);
+
+  useEffect(() => {
+    if (selectedSymbols.length > 0) {
+      fetchData(selectedSymbols, timeRange);
+    }
+  }, [selectedSymbols, timeRange, fetchData]);
+
+  const activePriceData = priceDataMap[symbol] || [];
 
   // Sync startDate with priceData when it loads
   useEffect(() => {
-    if (priceData && priceData.length > 0 && !startDate) {
-      setStartDate(priceData[0].date);
+    if (activePriceData && activePriceData.length > 0 && !startDate) {
+      setStartDate(activePriceData[0].date);
     }
-  }, [priceData]);
+  }, [activePriceData, startDate]);
 
   // Run simulation when conditions or data change
   useEffect(() => {
-    if (priceData && priceData.length > 0 && (entryConditions.length > 0 || exitConditions.length > 0)) {
-      console.log('Running simulation with startDate:', startDate);
-      runSimulation(priceData, entryConditions, exitConditions, initialCapital, startDate);
+    if (activePriceData && activePriceData.length > 0 && (entryConditions.length > 0 || exitConditions.length > 0)) {
+      console.log('Running simulation with startDate:', startDate, 'with composite:', compositeData.length, 'points');
+      runSimulation(activePriceData, entryConditions, exitConditions, initialCapital, startDate, compositeData);
     }
-  }, [priceData, entryConditions, exitConditions, initialCapital, startDate]);
+  }, [activePriceData, entryConditions, exitConditions, initialCapital, startDate, compositeData, runSimulation]);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -131,6 +172,10 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
 
     setSaving(true);
     try {
+      const uniqueSymbols = Array.from(
+        new Set(selectedSymbols.map((s) => s.toUpperCase()).filter((s) => s))
+      );
+
       const visualConfig = {
         entry_conditions: entryConditions,
         exit_conditions: exitConditions,
@@ -148,7 +193,7 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
         // Stock Universe - include analyzed symbols
         stock_universe: {
           type: 'specific',
-          symbols: selectedSymbols,
+          symbols: uniqueSymbols,
           filters: {}
         },
         // Auto-trading scheduling
@@ -257,17 +302,17 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Chart Display - 70% width */}
             <div className="lg:col-span-2">
-              <ChartDisplay
-                symbol={symbol}
-                timeRange={timeRange}
-                priceData={priceData}
-                entryConditions={entryConditions}
-                exitConditions={exitConditions}
-                signals={signals}
-                loading={loadingData}
-                onSymbolChange={setSymbol}
-                onTimeRangeChange={setTimeRange}
-              />
+        <ChartDisplay
+          symbol={symbol}
+          selectedSymbols={selectedSymbols}
+          timeRange={timeRange}
+          priceDataMap={priceDataMap}
+          compositeData={compositeData}
+          signals={signals}
+          loading={loadingData}
+          onSymbolChange={handleSymbolChange}
+          onTimeRangeChange={setTimeRange}
+        />
             </div>
 
             {/* Control Panel - 30% width */}
@@ -291,6 +336,9 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
                 onOpenSuggestions={() => setShowSuggestions(true)}
                 onInitialCapitalChange={setInitialCapital}
                 onStartDateChange={setStartDate}
+                selectedSymbols={selectedSymbols}
+                onAddSymbol={handleAddSymbol}
+                onRemoveSymbol={handleRemoveSymbol}
               />
             </div>
           </div>

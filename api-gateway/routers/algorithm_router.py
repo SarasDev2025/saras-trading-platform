@@ -1026,10 +1026,12 @@ class PreviewSignalsRequest(BaseModel):
     exit_conditions: List[Dict[str, Any]]
     initial_capital: Optional[float] = Field(default=10000, description="Initial capital for portfolio simulation")
     start_date: Optional[str] = Field(default=None, description="Start date for portfolio simulation (YYYY-MM-DD)")
+    composite_data: Optional[List[Dict[str, Any]]] = Field(default=None, description="Composite index data for multi-symbol strategies")
 
 @router.get("/visual/preview-data", response_model=APIResponse)
 async def get_preview_data(
-    symbol: str = Query(..., description="Stock symbol"),
+    symbol: Optional[str] = Query(None, description="Single stock symbol (deprecated in favour of 'symbols')"),
+    symbols: Optional[str] = Query(None, description="Comma separated list of stock symbols"),
     days: int = Query(90, ge=7, le=365, description="Number of days of historical data"),
     current_user: Annotated[Dict[str, Any], Depends(get_enhanced_current_user)] = None,
 ):
@@ -1038,6 +1040,17 @@ async def get_preview_data(
         from services.data_providers import DataProviderFactory
         from datetime import timedelta
         import pandas as pd
+
+        # Determine symbols to fetch
+        symbol_list: List[str] = []
+        if symbols:
+            symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
+
+        if not symbol_list:
+            if symbol:
+                symbol_list = [symbol.strip().upper()]
+            else:
+                raise HTTPException(status_code=400, detail="At least one symbol must be provided")
 
         # Calculate date range
         end_date = datetime.now().date()
@@ -1055,49 +1068,80 @@ async def get_preview_data(
 
         # Fetch historical data
         historical_data = await provider.get_historical_data(
-            symbols=[symbol],
+            symbols=symbol_list,
             start_date=start_date,
             end_date=end_date,
             region=region
         )
 
-        if not historical_data or symbol not in historical_data:
-            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+        symbol_data: Dict[str, List[Dict[str, Any]]] = {}
+        composite_df = None
 
-        df = historical_data[symbol]
+        for sym in symbol_list:
+            df = historical_data.get(sym)
 
-        if df is None or df.empty:
-            raise HTTPException(status_code=404, detail=f"No data found for symbol {symbol}")
+            if df is None or df.empty:
+                logger.warning(f"No data returned for symbol {sym}")
+                continue
 
-        # Calculate common indicators
-        # RSI
-        if 'close' in df.columns:
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            df['rsi'] = 100 - (100 / (1 + rs))
+            # Calculate indicators
+            if 'close' in df.columns:
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                df['rsi'] = 100 - (100 / (1 + rs))
+                df['sma_20'] = df['close'].rolling(window=20).mean()
+                df['sma_50'] = df['close'].rolling(window=50).mean()
+                df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
 
-        # SMA
-        if 'close' in df.columns:
-            df['sma_20'] = df['close'].rolling(window=20).mean()
-            df['sma_50'] = df['close'].rolling(window=50).mean()
+            df_copy = df.copy()
+            df_copy['date'] = df_copy['date'].dt.strftime('%Y-%m-%d')
+            symbol_data[sym] = df_copy.fillna(0).to_dict('records')
 
-        # EMA
-        if 'close' in df.columns:
-            df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
+            # Prepare composite calculations
+            try:
+                norm_df = df[['date', 'close']].copy()
+                norm_df = norm_df.dropna()
+                if not norm_df.empty and norm_df['close'].iloc[0] != 0:
+                    norm_df['norm'] = norm_df['close'] / norm_df['close'].iloc[0] * 100
+                    norm_df = norm_df[['date', 'norm']]
+                    if composite_df is None:
+                        composite_df = norm_df.rename(columns={'norm': sym})
+                    else:
+                        composite_df = composite_df.merge(
+                            norm_df.rename(columns={'norm': sym}),
+                            on='date',
+                            how='outer'
+                        )
+            except Exception as exc:
+                logger.warning(f"Failed to compute normalized series for {sym}: {exc}")
 
-        # Convert to JSON-serializable format
-        df_copy = df.copy()
-        df_copy['date'] = df_copy['date'].dt.strftime('%Y-%m-%d')
-        price_data = df_copy.fillna(0).to_dict('records')
+        if not symbol_data:
+            raise HTTPException(status_code=404, detail="No data found for selected symbols")
+
+        composite_data = []
+        if composite_df is not None:
+            composite_df = composite_df.sort_values('date')
+            composite_df = composite_df.ffill().bfill()
+            symbol_columns = [col for col in composite_df.columns if col != 'date']
+            composite_df['composite_index'] = composite_df[symbol_columns].mean(axis=1)
+            composite_data = composite_df[['date', 'composite_index']].assign(
+                date=lambda d: d['date'].dt.strftime('%Y-%m-%d')
+            ).to_dict('records')
+
+        primary_symbol = symbol_list[0]
+        primary_data = symbol_data.get(primary_symbol, [])
 
         return APIResponse(
             success=True,
             data={
-                "symbol": symbol,
-                "price_data": price_data,
-                "data_points": len(price_data)
+                "symbols": symbol_data,
+                "composite": composite_data,
+                "primary_symbol": primary_symbol,
+                "price_data": primary_data,
+                "data_points": len(primary_data),
+                "selected_symbols": symbol_list,
             }
         )
 
@@ -1120,6 +1164,37 @@ async def preview_signals(
         # Convert price data to DataFrame
         df = pd.DataFrame(request.price_data)
         df['date'] = pd.to_datetime(df['date'])
+
+        # Process composite data if provided (for hybrid strategies)
+        composite_df = None
+        if request.composite_data and len(request.composite_data) > 0:
+            composite_df = pd.DataFrame(request.composite_data)
+            composite_df['date'] = pd.to_datetime(composite_df['date'])
+
+            # Calculate indicators on composite index
+            if 'composite_index' in composite_df.columns:
+                # RSI on composite
+                delta = composite_df['composite_index'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                composite_df['composite_rsi'] = 100 - (100 / (1 + rs))
+
+                # SMA on composite
+                composite_df['composite_sma_20'] = composite_df['composite_index'].rolling(window=20).mean()
+                composite_df['composite_sma_50'] = composite_df['composite_index'].rolling(window=50).mean()
+
+                # EMA on composite
+                composite_df['composite_ema_20'] = composite_df['composite_index'].ewm(span=20, adjust=False).mean()
+
+                # Merge composite indicators into main dataframe
+                df = df.merge(
+                    composite_df[['date', 'composite_index', 'composite_rsi',
+                                  'composite_sma_20', 'composite_sma_50', 'composite_ema_20']],
+                    on='date',
+                    how='left'
+                )
+                logger.info("Composite indicators calculated and merged successfully")
 
         # Dynamically calculate any missing indicators based on conditions
         all_conditions = request.entry_conditions + request.exit_conditions
@@ -1319,7 +1394,7 @@ async def preview_signals(
 
 
 def evaluate_conditions(conditions: List[Dict[str, Any]], current_row, prev_row) -> bool:
-    """Evaluate if conditions are met"""
+    """Evaluate if conditions are met (supports composite reference)"""
     if not conditions:
         return False
 
@@ -1327,6 +1402,7 @@ def evaluate_conditions(conditions: List[Dict[str, Any]], current_row, prev_row)
 
     for condition in conditions:
         cond_type = condition.get('type')
+        reference = condition.get('reference')  # NEW: Check for composite reference
 
         if cond_type == 'indicator_comparison':
             indicator = condition.get('indicator')
@@ -1334,7 +1410,17 @@ def evaluate_conditions(conditions: List[Dict[str, Any]], current_row, prev_row)
             value = condition.get('value')
 
             if indicator and operator and value is not None:
-                indicator_value = current_row.get(indicator.lower())
+                # Check if this is a composite reference
+                if reference == 'composite':
+                    # Use composite indicators
+                    indicator_key = f"composite_{indicator.lower()}"
+                    if indicator == 'price':
+                        indicator_key = 'composite_index'
+                    indicator_value = current_row.get(indicator_key)
+                else:
+                    # Use individual symbol indicators
+                    indicator_value = current_row.get(indicator.lower())
+
                 if indicator_value is not None and indicator_value != 0:
                     if operator == 'below':
                         results.append(indicator_value < value)
@@ -1370,19 +1456,27 @@ def evaluate_conditions(conditions: List[Dict[str, Any]], current_row, prev_row)
 
 
 def format_condition_reason(conditions: List[Dict[str, Any]]) -> str:
-    """Format conditions into a human-readable reason"""
+    """Format conditions into a human-readable reason (supports composite)"""
     if not conditions:
         return "No conditions"
 
     reasons = []
     for condition in conditions:
         cond_type = condition.get('type')
+        reference = condition.get('reference')
 
         if cond_type == 'indicator_comparison':
             indicator = condition.get('indicator', 'Unknown')
             operator = condition.get('operator', 'Unknown')
             value = condition.get('value', 0)
-            reasons.append(f"{indicator} {operator} {value}")
+
+            # Add composite prefix if it's a composite reference
+            if reference == 'composite':
+                indicator_label = f"Composite {indicator}"
+            else:
+                indicator_label = indicator
+
+            reasons.append(f"{indicator_label} {operator} {value}")
 
         elif cond_type == 'indicator_crossover':
             indicator1 = condition.get('indicator1', 'Unknown')
@@ -1916,4 +2010,3 @@ async def get_algorithm_pnl(
     except Exception as e:
         logger.error(f"Failed to get algorithm P&L: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

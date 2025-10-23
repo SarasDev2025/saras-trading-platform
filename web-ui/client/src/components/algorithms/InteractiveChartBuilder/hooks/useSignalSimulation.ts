@@ -57,7 +57,8 @@ export function useSignalSimulation() {
       entryConditions: Condition[],
       exitConditions: Condition[],
       initialCapital?: number,
-      startDate?: string
+      startDate?: string,
+      compositeData?: Array<{date: string; composite_index: number}>
     ) => {
       if (priceData.length === 0) {
         setSignals([]);
@@ -75,6 +76,7 @@ export function useSignalSimulation() {
           exit_conditions: exitConditions,
           initial_capital: initialCapital,
           start_date: startDate,
+          composite_data: compositeData,  // NEW: Pass composite data for hybrid strategies
         };
 
         console.log('API Request - initial_capital:', initialCapital, 'start_date:', startDate);

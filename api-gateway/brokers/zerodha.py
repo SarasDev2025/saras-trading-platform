@@ -204,7 +204,7 @@ class ZerodhaBroker(BaseBroker):
             order_data = {
                 "tradingsymbol": symbol.upper(),
                 "exchange": exchange,
-                "transaction_type": side.upper(),
+                "transaction_type": side.value.upper(),
                 "order_type": zerodha_order_type,
                 "quantity": str(int(quantity)),
                 "product": product,  # CNC, MIS, NRML, CO, BO
@@ -288,7 +288,7 @@ class ZerodhaBroker(BaseBroker):
                 "last_price": str(float(trigger_price)),
                 "orders": [
                     {
-                        "transaction_type": side.upper(),
+                        "transaction_type": side.value.upper(),
                         "quantity": int(quantity),
                         "product": product,
                         "order_type": "LIMIT" if limit_price else "MARKET",
@@ -545,14 +545,14 @@ class ZerodhaBroker(BaseBroker):
                 "last_price": str(float(target_price if side == OrderSide.SELL else stop_loss_price)),
                 "orders": [
                     {
-                        "transaction_type": side.upper(),
+                        "transaction_type": side.value.upper(),
                         "quantity": int(quantity),
                         "product": product,
                         "order_type": "LIMIT",
                         "price": str(float(target_price))
                     },
                     {
-                        "transaction_type": side.upper(),
+                        "transaction_type": side.value.upper(),
                         "quantity": int(quantity),
                         "product": product,
                         "order_type": "SL-M",

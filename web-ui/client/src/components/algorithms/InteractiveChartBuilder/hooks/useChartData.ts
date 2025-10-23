@@ -14,15 +14,25 @@ interface PriceDataPoint {
 }
 
 export function useChartData() {
-  const [priceData, setPriceData] = useState<PriceDataPoint[]>([]);
+  const [priceDataMap, setPriceDataMap] = useState<Record<string, PriceDataPoint[]>>({});
+  const [compositeData, setCompositeData] = useState<Array<{ date: string; composite_index: number }>>([]);
+  const [primarySymbol, setPrimarySymbol] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (symbol: string, timeRange: string) => {
+  const fetchData = useCallback(async (symbols: string[], timeRange: string) => {
     setLoading(true);
     setError(null);
 
     try {
+      if (!symbols || symbols.length === 0) {
+        setPriceDataMap({});
+        setCompositeData([]);
+        setPrimarySymbol(null);
+        setLoading(false);
+        return;
+      }
+
       // Map time ranges to days
       const daysMap: Record<string, number> = {
         '1M': 30,
@@ -33,8 +43,10 @@ export function useChartData() {
 
       const days = daysMap[timeRange] || 90;
 
+      const symbolParam = symbols.join(',');
+
       const response = await fetch(
-        `/api/v1/algorithms/visual/preview-data?symbol=${symbol}&days=${days}`,
+        `/api/v1/algorithms/visual/preview-data?symbols=${encodeURIComponent(symbolParam)}&days=${days}`,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem('access_token')}`,
@@ -45,21 +57,29 @@ export function useChartData() {
       const data = await response.json();
 
       if (data.success) {
-        setPriceData(data.data.price_data);
+        setPriceDataMap(data.data.symbols || {});
+        setCompositeData(data.data.composite || []);
+        setPrimarySymbol(data.data.primary_symbol || symbols[0]);
       } else {
         setError(data.message || 'Failed to fetch chart data');
-        setPriceData([]);
+        setPriceDataMap({});
+        setCompositeData([]);
+        setPrimarySymbol(null);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch chart data');
-      setPriceData([]);
+      setPriceDataMap({});
+      setCompositeData([]);
+      setPrimarySymbol(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
   return {
-    priceData,
+    priceDataMap,
+    compositeData,
+    primarySymbol,
     loading,
     error,
     fetchData,

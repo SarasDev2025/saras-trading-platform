@@ -42,7 +42,22 @@ export function RuleBlock({
       case 'indicator_comparison':
         return (
           <>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Reference</Label>
+                <Select
+                  value={condition.reference || 'symbol'}
+                  onValueChange={(value) => onChange({ reference: value })}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="symbol">Individual Symbol</SelectItem>
+                    <SelectItem value="composite">Composite Index</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1">
                 <Label className="text-xs">Indicator</Label>
                 <Select
@@ -61,7 +76,9 @@ export function RuleBlock({
                   </SelectContent>
                 </Select>
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs">Operator</Label>
                 <Select

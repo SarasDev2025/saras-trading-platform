@@ -1,6 +1,7 @@
 """
 Alpaca Trading API broker integration
 """
+import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
@@ -26,6 +27,7 @@ class AlpacaBroker(BaseBroker):
         else:
             self.base_url = "https://paper-api.alpaca.markets" if paper_trading else "https://api.alpaca.markets"
         self.data_url = "https://data.alpaca.markets"
+        self.data_feed = os.getenv("ALPACA_DATA_FEED", "iex" if paper_trading else "sip")
         self.headers = {
             "APCA-API-KEY-ID": api_key,
             "APCA-API-SECRET-KEY": secret_key,
@@ -35,6 +37,7 @@ class AlpacaBroker(BaseBroker):
         self.cache_expiry = None
         self.trading_mode = "paper" if paper_trading else "live"
         logger.info(f"Initialized Alpaca broker in {self.trading_mode} mode using {self.base_url}")
+        logger.info(f"Alpaca market data feed configured as '{self.data_feed}'")
     
     async def authenticate(self) -> bool:
         """Authenticate with Alpaca"""
@@ -324,19 +327,22 @@ class AlpacaBroker(BaseBroker):
             # Get latest quote
             quote_response = await self.http_client.get(
                 f"{self.data_url}/v2/stocks/{symbol.upper()}/quotes/latest",
-                headers=self.headers
+                headers=self.headers,
+                params={"feed": self.data_feed}
             )
-            
+
             # Get latest trade for more accurate last price
             trade_response = await self.http_client.get(
                 f"{self.data_url}/v2/stocks/{symbol.upper()}/trades/latest",
-                headers=self.headers
+                headers=self.headers,
+                params={"feed": self.data_feed}
             )
-            
+
             # Get daily bar for OHLC data
             bar_response = await self.http_client.get(
                 f"{self.data_url}/v2/stocks/{symbol.upper()}/bars/latest",
-                headers=self.headers
+                headers=self.headers,
+                params={"feed": self.data_feed}
             )
             
             result = {"symbol": symbol.upper()}
@@ -423,6 +429,7 @@ class AlpacaBroker(BaseBroker):
                 "adjustment": "raw"
             }
             
+            params["feed"] = self.data_feed
             response = await self.http_client.get(
                 f"{self.data_url}/v2/stocks/{symbol.upper()}/bars",
                 headers=self.headers,
@@ -820,6 +827,7 @@ class AlpacaBroker(BaseBroker):
             if end:
                 params["end"] = end
             
+            params["feed"] = self.data_feed
             response = await self.http_client.get(
                 f"{self.data_url}/v2/stocks/bars",
                 headers=self.headers,

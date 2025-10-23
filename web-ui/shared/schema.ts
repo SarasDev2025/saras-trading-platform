@@ -32,3 +32,10 @@ export interface AddFundsResponse {
   total_value: number;
   amount_added: number;
 }
+
+export interface Position {
+  id: string;
+  symbol: string;
+  quantity: number;
+  orderStatus?: string;
+}

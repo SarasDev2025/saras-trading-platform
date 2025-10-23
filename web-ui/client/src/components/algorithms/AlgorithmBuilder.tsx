@@ -78,6 +78,15 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
   const [riskPerTrade, setRiskPerTrade] = useState(algorithm?.risk_per_trade || 2);
   const [parameters, setParameters] = useState(algorithm?.parameters || {});
 
+  // Stock Universe Configuration
+  const [stockUniverseType, setStockUniverseType] = useState<'specific' | 'all'>(
+    algorithm?.stock_universe?.type || 'specific'
+  );
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
+    algorithm?.stock_universe?.symbols || []
+  );
+  const [symbolInput, setSymbolInput] = useState('');
+
   // Advanced scheduling state
   const [schedulingType, setSchedulingType] = useState(algorithm?.scheduling_type || 'interval');
   const [executionTimeWindows, setExecutionTimeWindows] = useState<Array<{ start: string; end: string }>>(
@@ -135,6 +144,12 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
         max_positions: maxPositions,
         risk_per_trade: riskPerTrade,
         parameters,
+        // Stock Universe
+        stock_universe: {
+          type: stockUniverseType,
+          symbols: selectedSymbols,
+          filters: {}
+        },
         // Advanced scheduling
         scheduling_type: schedulingType,
         execution_time_windows: executionTimeWindows,
@@ -157,6 +172,20 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
   const addParameter = (key: string, value: any) => {
     setParameters({ ...parameters, [key]: value });
   };
+
+  const addSymbol = (symbol: string) => {
+    const upperSymbol = symbol.toUpperCase().trim();
+    if (upperSymbol && !selectedSymbols.includes(upperSymbol)) {
+      setSelectedSymbols([...selectedSymbols, upperSymbol]);
+      setSymbolInput('');
+    }
+  };
+
+  const removeSymbol = (symbol: string) => {
+    setSelectedSymbols(selectedSymbols.filter((s) => s !== symbol));
+  };
+
+  const POPULAR_SYMBOLS = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'GOOGL', 'TSLA', 'AMZN', 'NVDA', 'META'];
 
   // If visual mode, show NoCodeAlgorithmBuilder
   if (builderMode === 'visual') {
@@ -277,6 +306,116 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
             <TabsContent value="config" className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-6">
+                  {/* Stock Universe Configuration */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Stock Universe</CardTitle>
+                      <CardDescription>
+                        Define which symbols this algorithm will monitor
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-3">
+                        <Label>Universe Type</Label>
+                        <RadioGroup value={stockUniverseType} onValueChange={(v) => setStockUniverseType(v as 'specific' | 'all')}>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="specific" id="universe-specific" />
+                            <Label htmlFor="universe-specific" className="font-normal cursor-pointer">
+                              Specific Symbols - Choose symbols to monitor
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="all" id="universe-all" />
+                            <Label htmlFor="universe-all" className="font-normal cursor-pointer">
+                              All Symbols - Monitor popular stocks (SPY, QQQ, AAPL, etc.)
+                            </Label>
+                          </div>
+                        </RadioGroup>
+                      </div>
+
+                      {stockUniverseType === 'specific' && (
+                        <>
+                          <Separator />
+                          <div className="space-y-2">
+                            <Label>Selected Symbols</Label>
+                            {selectedSymbols.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {selectedSymbols.map((symbol) => (
+                                  <Badge
+                                    key={symbol}
+                                    variant="secondary"
+                                    className="px-2 py-1 cursor-pointer hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                                    onClick={() => removeSymbol(symbol)}
+                                  >
+                                    {symbol}
+                                    <span className="ml-1 text-xs">×</span>
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No symbols selected</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="symbol-input">Add Symbol</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="symbol-input"
+                                placeholder="e.g., AAPL"
+                                value={symbolInput}
+                                onChange={(e) => setSymbolInput(e.target.value)}
+                                onKeyPress={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addSymbol(symbolInput);
+                                  }
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => addSymbol(symbolInput)}
+                                disabled={!symbolInput.trim()}
+                              >
+                                Add
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-sm">Popular Symbols</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {POPULAR_SYMBOLS.map((symbol) => (
+                                <Button
+                                  key={symbol}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => addSymbol(symbol)}
+                                  disabled={selectedSymbols.includes(symbol)}
+                                >
+                                  {symbol}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {selectedSymbols.length === 0 && stockUniverseType === 'specific' && (
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            Please select at least one symbol to monitor
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Separator />
+
                   {/* Auto-Run Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
@@ -574,7 +713,15 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
             <Button variant="outline" onClick={onCancel}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving || !name || !strategyCode}>
+            <Button
+              onClick={handleSave}
+              disabled={
+                saving ||
+                !name ||
+                !strategyCode ||
+                selectedSymbols.length === 0
+              }
+            >
               {saving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -588,6 +735,11 @@ export function AlgorithmBuilder({ algorithm, onSave, onCancel }: AlgorithmBuild
               )}
             </Button>
           </div>
+          {selectedSymbols.length === 0 && (
+            <p className="text-sm text-red-400 text-right mt-2">
+              Please select at least one symbol to monitor
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

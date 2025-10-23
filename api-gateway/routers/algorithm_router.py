@@ -152,6 +152,29 @@ async def create_algorithm(
             if not validation['valid']:
                 raise HTTPException(status_code=400, detail=validation['error'])
 
+        # Validate stock_universe - REQUIRED
+        if not request.stock_universe:
+            raise HTTPException(
+                status_code=400,
+                detail="stock_universe is required. Please select at least one symbol to monitor."
+            )
+
+        # Validate symbols are provided
+        symbols = request.stock_universe.get('symbols', [])
+        if not symbols:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one symbol must be selected in stock_universe."
+            )
+
+        # Validate type
+        universe_type = request.stock_universe.get('type', '')
+        if universe_type not in ['specific', 'all']:
+            raise HTTPException(
+                status_code=400,
+                detail="stock_universe type must be 'specific' or 'all'"
+            )
+
         # Create algorithm
         result = await db.execute(text("""
             INSERT INTO trading_algorithms (

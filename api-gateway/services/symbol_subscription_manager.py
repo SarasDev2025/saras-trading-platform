@@ -303,20 +303,45 @@ class SymbolSubscriptionManager:
                 active_algorithm_ids.add(algorithm_id)
 
                 # Parse stock universe
-                stock_universe = algo.stock_universe or {}
+                stock_universe = algo.stock_universe
+
+                # Validate stock_universe exists
+                if not stock_universe:
+                    logger.error(
+                        f"Algorithm {algorithm_id} has NULL stock_universe - skipping subscription. "
+                        f"Algorithm will not receive market data or generate signals!"
+                    )
+                    continue
 
                 # Determine symbols
                 symbols = []
-                if stock_universe.get('type') == 'specific':
+                universe_type = stock_universe.get('type', '')
+
+                if universe_type == 'specific':
                     symbols = stock_universe.get('symbols', [])
-                elif stock_universe.get('type') == 'all':
-                    # For 'all', we could subscribe to a default set
-                    # For now, skip these to avoid over-subscription
+                    if not symbols:
+                        logger.error(
+                            f"Algorithm {algorithm_id} has type='specific' but no symbols - skipping subscription. "
+                            f"Algorithm will not receive market data or generate signals!"
+                        )
+                        continue
+                elif universe_type == 'all':
+                    # For 'all' type, user must provide at least one symbol or filter
+                    symbols = stock_universe.get('symbols', [])
+                    if not symbols:
+                        logger.error(
+                            f"Algorithm {algorithm_id} has type='all' but no symbols specified - skipping subscription. "
+                            f"User must select symbols to monitor!"
+                        )
+                        continue
+                else:
+                    logger.error(
+                        f"Algorithm {algorithm_id} has invalid stock_universe type '{universe_type}' - skipping subscription"
+                    )
                     continue
 
                 # Subscribe algorithm to symbols
-                if symbols:
-                    await self.subscribe_algorithm(algorithm_id, symbols)
+                await self.subscribe_algorithm(algorithm_id, symbols)
 
             # Unsubscribe algorithms that are no longer active
             all_subscribed_algorithms = set(self._algorithm_subscriptions.keys())

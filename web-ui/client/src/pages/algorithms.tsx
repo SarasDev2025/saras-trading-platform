@@ -12,6 +12,7 @@ import { AlgorithmCard } from '@/components/algorithms/AlgorithmCard';
 import { algorithmAPI } from '@/lib/api';
 import { Code, TrendingUp, Activity, DollarSign, Target, Loader2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function Algorithms() {
   const [algorithms, setAlgorithms] = useState<any[]>([]);
@@ -24,6 +25,7 @@ export default function Algorithms() {
   const [selectedAlgorithm, setSelectedAlgorithm] = useState<any>(null);
 
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     loadData();
@@ -99,6 +101,10 @@ export default function Algorithms() {
 
       setShowBuilder(false);
       loadData();
+
+      // Invalidate React Query cache for dashboard component
+      queryClient.invalidateQueries({ queryKey: ['algorithm-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['algorithms-list'] });
     } catch (err: any) {
       toast({
         title: 'Error',
@@ -118,6 +124,10 @@ export default function Algorithms() {
         description: 'Algorithm deleted successfully',
       });
       loadData();
+
+      // Invalidate React Query cache for dashboard component
+      queryClient.invalidateQueries({ queryKey: ['algorithm-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['algorithms-list'] });
     } catch (err) {
       toast({
         title: 'Error',
@@ -135,6 +145,10 @@ export default function Algorithms() {
         description: 'Algorithm status updated',
       });
       loadData();
+
+      // Invalidate React Query cache for dashboard component
+      queryClient.invalidateQueries({ queryKey: ['algorithm-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['algorithms-list'] });
     } catch (err) {
       toast({
         title: 'Error',

@@ -39,6 +39,11 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
   const [symbol, setSymbol] = useState('AAPL');
   const [timeRange, setTimeRange] = useState('3M'); // 1M, 3M, 6M, 1Y
 
+  // Stock Universe - track symbols to monitor (auto-populate with analyzed symbol)
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(
+    algorithm?.stock_universe?.symbols || ['AAPL']
+  );
+
   // Conditions
   const [entryConditions, setEntryConditions] = useState<Condition[]>(
     algorithm?.visual_config?.entry_conditions || []
@@ -81,6 +86,13 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
   const [initialCapital, setInitialCapital] = useState(10000);
   const [startDate, setStartDate] = useState('');
 
+  // Auto-add analyzed symbol to stock universe
+  useEffect(() => {
+    if (symbol && !selectedSymbols.includes(symbol)) {
+      setSelectedSymbols([...selectedSymbols, symbol]);
+    }
+  }, [symbol]);
+
   // Fetch initial data
   useEffect(() => {
     fetchData(symbol, timeRange);
@@ -112,6 +124,11 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
       return;
     }
 
+    if (selectedSymbols.length === 0) {
+      alert('Please analyze at least one symbol. The algorithm needs symbols to monitor.');
+      return;
+    }
+
     setSaving(true);
     try {
       const visualConfig = {
@@ -128,6 +145,12 @@ export function InteractiveChartBuilder({ algorithm, onSave, onCancel }: Interac
         visual_config: visualConfig,
         max_positions: maxPositions,
         risk_per_trade: riskPerTrade,
+        // Stock Universe - include analyzed symbols
+        stock_universe: {
+          type: 'specific',
+          symbols: selectedSymbols,
+          filters: {}
+        },
         // Auto-trading scheduling
         auto_run: autoRun,
         execution_interval: executionInterval,

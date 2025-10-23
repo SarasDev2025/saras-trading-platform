@@ -47,7 +47,7 @@ export function AlgorithmStatus() {
       console.log('[AlgorithmStatus] Fetching algorithm dashboard');
 
       try {
-        const res = await api.get<ApiResponse<ApiAlgorithmDashboard>>('/algorithms/dashboard');
+        const res = await api.get<ApiResponse<ApiAlgorithmDashboard>>('/api/v1/algorithms/dashboard');
         console.log('[AlgorithmStatus] Dashboard API Response Status:', res.status);
 
         const apiResponse = res.data;
@@ -73,7 +73,7 @@ export function AlgorithmStatus() {
       console.log('[AlgorithmStatus] Fetching algorithms list');
 
       try {
-        const res = await api.get<ApiResponse<ApiAlgorithm[]>>('/algorithms');
+        const res = await api.get<ApiResponse<ApiAlgorithm[]>>('/api/v1/algorithms');
         console.log('[AlgorithmStatus] Algorithms API Response Status:', res.status);
 
         const apiResponse = res.data;
